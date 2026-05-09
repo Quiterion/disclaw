@@ -1,0 +1,6 @@
+[submodule "third_party/discli"]
+	path = third_party/discli
+	url = https://github.com/DevRohit06/discli
+[submodule "third_party/pi"]
+	path = third_party/pi
+	url = https://github.com/earendil-works/pi
