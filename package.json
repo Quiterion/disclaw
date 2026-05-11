@@ -12,7 +12,7 @@
     "test": "node --import tsx --test test/**/*.test.ts"
   },
   "dependencies": {
-    "pi-acm": "^0.3.9"
+    "pi-acm": "file:./third_party/pi-acm"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

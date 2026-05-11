@@ -1,0 +1,39 @@
+{
+  "name": "pi-acm",
+  "version": "0.3.9",
+  "description": "Active Context Management for pi — sliding window context management as a distributable pi extension",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "context-management",
+    "acm"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  },
+  "dependencies": {
+    "gpt-tokenizer": "^3.4.0"
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-tui": "*",
+    "@sinclair/typebox": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0",
+    "@types/node": "^22.0.0",
+    "vitest": "^3.2.0"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  }
+}
