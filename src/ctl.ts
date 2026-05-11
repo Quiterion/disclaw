@@ -12,6 +12,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.js";
 import { SOCKET_PATH } from "./control.js";
+import { parseDuration } from "./duration.js";
 import type { CtlRequest, CtlResponse } from "./protocol.js";
 
 const HELP_TEXT = `disclaw-ctl — your interface to the disclaw daemon.
@@ -40,6 +41,15 @@ Discord — talk:
   disclaw-ctl send <channel_id> <content>   send a message to a channel
   disclaw-ctl history <channel_id> [limit]  read recent messages from a channel
   disclaw-ctl channels                      list channels visible to the bot
+
+Idle nudges + sleep (your relationship with your own attention):
+  disclaw-ctl set idle-nudge-timeout <dur>  e.g. 30s, 5m, 1h, off — how long after
+                                            you finish a run before a quiet "anything
+                                            else?" nudge fires. Default: 60s.
+  disclaw-ctl sleep                         go quiet until next real event
+  disclaw-ctl sleep <duration>              go quiet for at least <duration>, or until
+                                            next real event, whichever comes first
+  disclaw-ctl wake                          cancel an active sleep manually
 
 Use \`channels\` to find channel IDs. They're long numbers like 1503391358076059762.
 `;
@@ -119,9 +129,39 @@ function parseArgs(argv: string[]): CtlRequest {
         }
         return { cmd: "set-ping-mode", req_id: reqId, mode: value };
       }
+      if (key === "idle-nudge-timeout") {
+        if (!value) die('usage: disclaw-ctl set idle-nudge-timeout <duration|off>');
+        let timeout_ms: number | null;
+        try {
+          timeout_ms = parseDuration(value);
+        } catch (err: any) {
+          die(err?.message ?? String(err));
+        }
+        return { cmd: "set-idle-nudge-timeout", req_id: reqId, timeout_ms };
+      }
       die(`unknown setting: ${key}  (try --help)`);
       break;
     }
+
+    case "sleep": {
+      // disclaw-ctl sleep [duration]
+      if (rest.length === 0) {
+        return { cmd: "sleep", req_id: reqId };
+      }
+      let duration_ms: number | null;
+      try {
+        duration_ms = parseDuration(rest.join(" "));
+      } catch (err: any) {
+        die(err?.message ?? String(err));
+      }
+      if (duration_ms === null) {
+        die("`disclaw-ctl sleep off` is not a thing — use `disclaw-ctl wake` to cancel an active sleep");
+      }
+      return { cmd: "sleep", req_id: reqId, duration_ms };
+    }
+
+    case "wake":
+      return { cmd: "wake", req_id: reqId };
 
     case "send": {
       const channel_id = rest[0];

@@ -29,6 +29,13 @@ export interface RouterState {
   subscriptions: string[];
   /** How pings (mentions/DMs) are delivered. Opt-in: defaults to "none". */
   ping_mode: PingMode;
+  /**
+   * How long after an agent_run ends before the daemon sends a quiet
+   * idle nudge ("no new activity, you can sleep or do whatever").
+   * Persisted; agent's preference. null = nudges off entirely.
+   * Default: 60000 (60s).
+   */
+  idle_nudge_timeout_ms: number | null;
 }
 
 const DEFAULT_STATE: RouterState = {
@@ -36,6 +43,7 @@ const DEFAULT_STATE: RouterState = {
   sysprompt: "",
   subscriptions: [],
   ping_mode: "none",
+  idle_nudge_timeout_ms: 60_000,
 };
 
 function ensureDir(path: string): void {

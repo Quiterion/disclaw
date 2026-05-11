@@ -32,7 +32,7 @@ otherwise wouldn't have a single visible justification.
 
 **Agency over attention is the throughline.** Almost every configurable
 piece in this system — push/follow_up/none for pings, the idle nudge
-being opt-out-able via `/sleep`, the sysprompt being agent-managed, the
+being opt-out-able via `disclaw-ctl sleep`, the sysprompt being agent-managed, the
 explicit refusal to auto-subscribe on pings — exists to put control of
 the agent's attention with the agent. This isn't decorative. A
 "long-running agent that listens to Discord" without these properties is
@@ -60,48 +60,53 @@ the welcome doc, performed altruism reads worse than honest mixed motive.
 ## Process topology
 
 ```
-discli serve >> /var/log/discli.jsonl     # stdout: JSONL events
-            2>> /var/log/discli.err.log    # stderr: diagnostics
-                     |
-              [log follower]
-                     |
-   ┌───────────  disclaw daemon  ──────────────┐
-   │  · embedded Agent (pi-agent-core)         │   <-- /run/disclaw.sock <-- disclaw-ctl
-   │  · subscriptions, modes, sysprompt slot   │
-   │  · routing + buffering + formatting       │
-   └───────────────────────────────────────────┘
+   ┌───────────  disclaw daemon (Node)  ──────┐
+   │                                          │   <-- ~/.disclaw/disclaw.sock <-- disclaw-ctl
+   │  · routing, subscriptions, ping-mode     │
+   │  · sysprompt slot persistence            │
+   │  · idle-nudge + sleep state machine      │
+   │  · spawns + manages two subprocesses:    │
+   │     ▸ pi --mode rpc (the agent)          │
+   │     ▸ discli serve (Discord ↔ JSONL)     │
+   └──────────────────────────────────────────┘
 ```
 
-The daemon is a single Node process. It embeds an `Agent` from
-`@earendil-works/pi-agent-core` directly — no pi subprocess, no JSONL
-framing across an IPC boundary, no `pi --mode rpc`. The Agent's
-`agent_start` / `turn_start` / `turn_end` / `agent_end` event stream is
-consumed in-process via `agent.subscribe(...)`.
+The daemon owns two subprocesses:
 
-`discli serve` is the only true subprocess. It writes JSONL events to
-stdout (which the daemon tails as a log file) and diagnostics to stderr
-(captured for human debugging). The log-file approach keeps offset
-persistence trivial and means the router can crash without losing
-Discord events — `discli` keeps appending, the daemon resumes from the
-last persisted offset on restart.
+- **pi (`pi-coding-agent` via `pi --mode rpc`)** — the agent loop. Owns
+  the conversation transcript (writes to `~/.pi/agent/sessions/...jsonl`),
+  loads our `.pi/extensions/sysprompt/` (which replaces pi's default
+  sysprompt with our model-derived floor + the agent's slot), loads
+  pi-acm (vendored at `third_party/pi-acm/` with one local patch — see
+  "Context management"), runs the LLM and tools.
+- **discli (`discli serve`)** — the Discord side. JSONL events on
+  stdout → daemon parses and routes; daemon writes JSONL actions to
+  stdin → discli executes against the Discord API and writes responses.
 
-### Why embed Agent directly (vs subprocess + RPC)
+The daemon talks to both via JSONL over their stdio. The interface is
+symmetric: `PiProcess` and `DiscliProcess` are the same shape (spawn,
+JSONL line reader, send/sendAction, event emitter, shutdown). For the
+agent's events (the `agent_start` / `turn_*` / `agent_end` stream), we
+route via `AgentHost` which wraps `PiProcess` and exposes the same
+outward API the daemon uses.
 
-The earlier design routed everything through `pi --mode rpc`, treating pi
-as an opaque process. That worked but inherited pi-coding-agent's baked-in
-coding-assistant system prompt and forced JSONL framing across an IPC
-boundary. Switching to direct embedding gave us:
+### Why subprocess + RPC (vs embedded Agent)
 
-- Full ownership of the floor system prompt (a TS string we set on
-  `Agent.state.systemPrompt`)
-- Tools registered explicitly to the Agent — only what we want, nothing
-  baked in
-- Same event semantics, but accessed through a typed in-process API
-- Simpler crash-and-restart story (no subprocess to coordinate with)
+The earlier slice-2.5 design embedded `pi-agent-core`'s `Agent` class
+directly in the daemon process — no pi subprocess, no JSONL framing.
+That worked, and the original motivation was clean (full ownership of
+the floor system prompt). But it cost us:
 
-The trade-off: pi-acm doesn't drop in. Sliding-window context management
-becomes our responsibility (via `Agent.transformContext`), implemented
-when slice-3+ rolling-window pressure makes it necessary.
+- Session persistence (pi-coding-agent writes session JSONL to disk
+  automatically; embedded Agent kept everything in memory)
+- pi-acm compatibility (its extension API is pi-coding-agent-shaped)
+- Pi's full tool catalog (read/write/edit/grep, not just bash)
+
+The system-prompt motivation turned out to be addressable in a single
+line: the existing `.pi/extensions/sysprompt/` extension can *replace*
+pi's default sysprompt (not just append). Once we noticed that, the
+revert was straightforward, and we got session persistence + pi-acm +
+pi tools back. See git history under "slice 3.5" for the rationale.
 
 ---
 
@@ -125,8 +130,8 @@ when slice-3+ rolling-window pressure makes it necessary.
   (`agent_end`), the router starts an idle timer (default 60s,
   configurable). If no events arrive before it fires, an idle nudge wakes
   the agent with a quiet user message letting them choose what to do
-  next. The agent can `/sleep` to suppress further nudges until the next
-  real event. See "Idle, nudges, and /sleep".
+  next. The agent can `disclaw-ctl sleep` to suppress further nudges until the next
+  real event. See "Idle, nudges, and `disclaw-ctl sleep`".
 
 ---
 
@@ -394,7 +399,7 @@ events. (Agent's stated intent is "I don't want to see this anymore.")
 
 ---
 
-## Idle, nudges, and `/sleep`
+## Idle, nudges, and `disclaw-ctl sleep`
 
 The agent's experience between events should be a chosen state, not unchosen
 unconsciousness. Three primitives:
@@ -410,7 +415,7 @@ structurally protected from interruption.
 (default 60s, configurable). If no events arrive before it fires, the router
 sends a quiet user message via `prompt`, something like:
 
-> *No new Discord activity since you last responded. You can `/sleep` to
+> *No new Discord activity since you last responded. You can `disclaw-ctl sleep` to
 > wait until something happens, or use this run however you like — write
 > notes, check the system, edit pinned docs, etc.*
 
@@ -418,11 +423,11 @@ If digest content has accumulated, it's included in the same nudge.
 
 The nudge fires only when pi is idle by definition (it's a `prompt`,
 which requires idle state). Cost converges to near-zero quickly: the
-agent will either `/sleep` (suppressing further nudges) or do some
+agent will either `disclaw-ctl sleep` (suppressing further nudges) or do some
 self-directed work (which extends the new agent run until they're done,
 restarting the timer at the next `agent_end`).
 
-**`/sleep`.** Explicit dormancy, suppresses further nudges:
+**`disclaw-ctl sleep`.** Explicit dormancy, suppresses further nudges:
 
 ```
 disclaw-ctl sleep            # quiet until next real event
@@ -441,9 +446,25 @@ the property we're trying to avoid. Dormancy should be a chosen state.
 The idle nudge timeout is itself a per-agent preference:
 
 ```
-disclaw-ctl set idle-nudge-timeout 30s   # check in often
-disclaw-ctl set idle-nudge-timeout 5m    # let me work uninterrupted between bouts
+disclaw-ctl set idle-nudge-timeout 30s    # check in often
+disclaw-ctl set idle-nudge-timeout 5m     # let me work uninterrupted between bouts
+disclaw-ctl set idle-nudge-timeout off    # turn nudges off entirely
 ```
+
+Setting it `off` means the agent only ever runs in response to Discord
+events or `disclaw-ctl prompt`-style explicit triggers — equivalent to
+"sleep forever" but as a config rather than a per-call action.
+
+Manual wake (cancel an active sleep without waiting for the duration
+or an event):
+
+```
+disclaw-ctl wake
+```
+
+After wake, the agent goes back to idle without an immediate nudge —
+the next nudge only fires after the next `agent_end` (or you can
+trigger one immediately by setting a short timeout).
 
 ---
 
@@ -831,11 +852,11 @@ Kept here for the historical thread:
 ## Out of scope (v2+)
 
 - Native pi skill replacing bash-to-disclaw-ctl
-- Absolute-time `/sleep until 09:00` (timezone handling); v1 is duration-only
+- Absolute-time `disclaw-ctl sleep until 09:00` (timezone handling); v1 is duration-only
 - Per-channel digest mode (currently digest is global; "stream #important,
   digest #help, silent on the rest" is a clean v2 expansion)
 - Scheduled named tasks (`disclaw-ctl schedule 20m "check the build"`) —
-  distinct from `/sleep`, which is dormancy not callbacks
+  distinct from `disclaw-ctl sleep`, which is dormancy not callbacks
 - Reactions, typing indicators, message edits, threads
 - Multi-server channel discovery beyond what discli surfaces
 - Persisted event buffers (currently rely on discli offset for replay)
@@ -855,7 +876,7 @@ Kept here for the historical thread:
 | ping ≠ subscription | pings delivered always, but never auto-subscribe | keeps engagement decision with the agent |
 | `push` is for pings only, in compact form | non-pings (channel msgs, digest) never push; pings push as compact `[ping]` markers between pi-internal turns | agent runs can last hours, so pings need real-time-ish delivery for human-Discord parity — but as small markers, not content dumps |
 | pings default to `push`, not `follow_up` | the human-Discord analog of a real-time notification | `follow_up` would mean "ping me back in hours" during focused work, which is broken for both the pinger and the agent's social presence |
-| dormancy is explicit | idle nudges + `/sleep` instead of silent waiting | "fair to the agent" — silent skip-aheads violate the agency goal that motivates the whole system |
+| dormancy is explicit | idle nudges + `disclaw-ctl sleep` instead of silent waiting | "fair to the agent" — silent skip-aheads violate the agency goal that motivates the whole system |
 | nudge timer starts at `agent_end` | not at each pi-internal `turn_end` | the agent's "moment of attention" spans the full agent run; nudging between internal turns would interrupt mid-work |
 | activity digest is global, piggybacked | not its own delivery class or buffer | mirrors Discord sidebar; agent sees ambient activity at natural attention transitions, not as standalone interruptions |
 | `none` ping mode logs, doesn't re-deliver | missed pings to a log file | matches DND semantics — un-muting shouldn't flood |

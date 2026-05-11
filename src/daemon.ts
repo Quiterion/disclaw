@@ -84,10 +84,84 @@ async function main(): Promise<void> {
     }
     if (event.type === "tool_execution_start") {
       log(`[event] tool_execution_start(${event.toolName})`);
+    } else {
+      log(`[event] ${event.type}`);
+    }
+
+    // Idle-nudge lifecycle: cancel pending nudge when a run starts;
+    // schedule a fresh nudge after a run ends.
+    if (event.type === "agent_start") cancelNudgeTimer();
+    if (event.type === "agent_end") scheduleNudgeTimer();
+  });
+
+  // ── Idle nudges + sleep state ───────────────────────────────────────
+  // Both are in-memory only — daemon restart wakes any sleeping agent
+  // and clears any pending nudge timer (which is fine: there's no
+  // recent agent_end on startup to schedule from).
+  let nudgeTimer: NodeJS.Timeout | null = null;
+  let sleep: { until_ms: number | null; expiryTimer: NodeJS.Timeout | null } | null = null;
+
+  function scheduleNudgeTimer(): void {
+    cancelNudgeTimer();
+    if (sleep) return; // sleeping suppresses nudges
+    if (state.idle_nudge_timeout_ms === null) return; // off
+    const ms = state.idle_nudge_timeout_ms;
+    log(`[nudge] scheduled in ${ms}ms`);
+    nudgeTimer = setTimeout(() => {
+      nudgeTimer = null;
+      fireNudge("scheduled");
+    }, ms);
+  }
+
+  function cancelNudgeTimer(): void {
+    if (nudgeTimer) {
+      clearTimeout(nudgeTimer);
+      nudgeTimer = null;
+      log(`[nudge] cancelled`);
+    }
+  }
+
+  function fireNudge(reason: "scheduled" | "sleep-expired"): void {
+    if (!host.isIdle) {
+      log(`[nudge] skipped — pi not idle`);
       return;
     }
-    log(`[event] ${event.type}`);
-  });
+    log(`[nudge] firing (${reason})`);
+    const text = reason === "sleep-expired"
+      ? "Your sleep duration expired and no new activity arrived. " +
+        "Use `disclaw-ctl sleep` again to wait some more, or use this run however you like."
+      : "No new Discord activity since you last responded. " +
+        "Use `disclaw-ctl sleep` to wait until something happens, or use this run however you " +
+        "like — write notes, check the system, edit your sysprompt.";
+    host.prompt(text).catch((err) => log(`[nudge-error] ${err.message}`));
+  }
+
+  function requestSleep(durationMs?: number): void {
+    cancelNudgeTimer();
+    cancelSleep(); // belt-and-braces
+    const until_ms = durationMs !== undefined ? Date.now() + durationMs : null;
+    const newSleep: { until_ms: number | null; expiryTimer: NodeJS.Timeout | null } = {
+      until_ms,
+      expiryTimer: null,
+    };
+    sleep = newSleep;
+    if (durationMs !== undefined) {
+      newSleep.expiryTimer = setTimeout(() => {
+        sleep = null;
+        log(`[sleep] expired`);
+        fireNudge("sleep-expired");
+      }, durationMs);
+      log(`[sleep] starting (until ${new Date(until_ms!).toISOString()})`);
+    } else {
+      log(`[sleep] starting (until next event)`);
+    }
+  }
+
+  function cancelSleep(): void {
+    if (sleep?.expiryTimer) clearTimeout(sleep.expiryTimer);
+    if (sleep) log(`[sleep] cancelled`);
+    sleep = null;
+  }
 
   // ── Routing helper ──────────────────────────────────────────────────
   // Translates a routing decision into the right AgentHost call,
@@ -122,6 +196,8 @@ async function main(): Promise<void> {
             sysprompt_chars: state.sysprompt.length,
             subscriptions: [...state.subscriptions],
             ping_mode: state.ping_mode,
+            idle_nudge_timeout_ms: state.idle_nudge_timeout_ms,
+            ...(sleep ? { sleep: { until_ms: sleep.until_ms } } : {}),
           },
         };
         // Augment with pi's RPC-side state if reachable.
@@ -198,6 +274,37 @@ async function main(): Promise<void> {
         return { req_id: req.req_id, ok: true, result: { ping_mode: req.mode } };
       }
 
+      case "set-idle-nudge-timeout": {
+        state = { ...state, idle_nudge_timeout_ms: req.timeout_ms };
+        saveState(state);
+        // If pi is currently idle, reschedule (or cancel) the timer to
+        // reflect the new value immediately. (No-op if nothing pending.)
+        if (host.isIdle && nudgeTimer !== null) {
+          scheduleNudgeTimer();
+        }
+        return {
+          req_id: req.req_id,
+          ok: true,
+          result: { idle_nudge_timeout_ms: req.timeout_ms },
+        };
+      }
+
+      case "sleep":
+        requestSleep(req.duration_ms);
+        return {
+          req_id: req.req_id,
+          ok: true,
+          result: sleep
+            ? { until_ms: sleep.until_ms ?? null }
+            : { until_ms: null },
+        };
+
+      case "wake":
+        cancelSleep();
+        // After a manual wake, don't auto-fire a nudge — the agent woke
+        // by their own action and gets to wait for events / next agent_end.
+        return { req_id: req.req_id, ok: true };
+
       case "discord-send": {
         if (!discli) return discordUnavailable(req.req_id);
         const result = await discli.sendAction({
@@ -262,6 +369,11 @@ async function main(): Promise<void> {
             `[discord-deliver] mode=${decision.mode} class=${decision.class} ` +
               `from=${msgEvent.author} #${msgEvent.channel}`,
           );
+          // A real event preempts both pending nudge and active sleep.
+          // (Nudge will be re-scheduled at the next agent_end via the
+          // host event handler; sleep just clears.)
+          cancelNudgeTimer();
+          if (sleep) cancelSleep();
           deliverToAgent(decision.mode, decision.userMessage);
         } else if (event.event === "ready") {
           log(`[discord] ready as ${event.bot_name} (${event.bot_id})`);

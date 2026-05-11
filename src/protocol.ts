@@ -22,7 +22,10 @@ export type CtlRequest =
   | { cmd: "set-ping-mode"; req_id: string; mode: PingMode }
   | { cmd: "discord-send"; req_id: string; channel_id: string; content: string }
   | { cmd: "discord-history"; req_id: string; channel_id: string; limit?: number }
-  | { cmd: "discord-channels"; req_id: string; guild_id?: string };
+  | { cmd: "discord-channels"; req_id: string; guild_id?: string }
+  | { cmd: "set-idle-nudge-timeout"; req_id: string; timeout_ms: number | null }
+  | { cmd: "sleep"; req_id: string; duration_ms?: number }
+  | { cmd: "wake"; req_id: string };
 
 export type CtlCmdName = CtlRequest["cmd"];
 
@@ -62,5 +65,11 @@ export interface DaemonState {
     sysprompt_chars: number;
     subscriptions: string[];
     ping_mode: PingMode;
+    idle_nudge_timeout_ms: number | null;
+    /** Sleep state — only set while the agent has requested dormancy. */
+    sleep?: {
+      /** unix-ms timestamp when sleep auto-expires, or null for "until next event". */
+      until_ms: number | null;
+    };
   };
 }
