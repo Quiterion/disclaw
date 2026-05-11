@@ -8,7 +8,8 @@
     "ctl": "node --import tsx src/ctl.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test": "node --import tsx --test test/**/*.test.ts"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "file:./third_party/pi/packages/agent",

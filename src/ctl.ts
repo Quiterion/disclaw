@@ -47,7 +47,6 @@ function parseArgs(argv: string[]): CtlRequest {
     }
 
     case "sysprompt": {
-      // Subcommands: (none) | show | set <text|--stdin> | clear
       const sub = rest[0];
       if (!sub || sub === "show") {
         return { cmd: "sysprompt-show", req_id: reqId };
@@ -63,10 +62,7 @@ function parseArgs(argv: string[]): CtlRequest {
         } else if (tail.length > 0) {
           value = tail.join(" ");
         } else {
-          die(
-            'usage: disclaw-ctl sysprompt set "<text>"  OR  ' +
-              "disclaw-ctl sysprompt set --stdin",
-          );
+          die('usage: disclaw-ctl sysprompt set "<text>"  OR  disclaw-ctl sysprompt set --stdin');
         }
         return { cmd: "sysprompt-set", req_id: reqId, value };
       }
@@ -74,11 +70,44 @@ function parseArgs(argv: string[]): CtlRequest {
       break;
     }
 
+    case "subscribe": {
+      const channel_id = rest[0];
+      if (!channel_id) die("usage: disclaw-ctl subscribe <channel_id>");
+      return { cmd: "subscribe", req_id: reqId, channel_id };
+    }
+
+    case "unsubscribe": {
+      const channel_id = rest[0];
+      if (!channel_id) die("usage: disclaw-ctl unsubscribe <channel_id>");
+      return { cmd: "unsubscribe", req_id: reqId, channel_id };
+    }
+
+    case "list-subscriptions":
+    case "list":
+      return { cmd: "list-subscriptions", req_id: reqId };
+
+    case "set": {
+      // disclaw-ctl set <key> <value>
+      // Currently supported keys: ping-mode
+      const key = rest[0];
+      const value = rest[1];
+      if (!key) die("usage: disclaw-ctl set <key> <value>");
+      if (key === "ping-mode") {
+        if (value !== "push" && value !== "follow_up" && value !== "none") {
+          die("ping-mode must be one of: push, follow_up, none");
+        }
+        return { cmd: "set-ping-mode", req_id: reqId, mode: value };
+      }
+      die(`unknown setting: ${key}`);
+      break;
+    }
+
     default:
       die(
         cmd
           ? `unknown command: ${cmd}`
-          : "usage: disclaw-ctl {ping|get-state|prompt <msg>|sysprompt [show|set|clear]}",
+          : "usage: disclaw-ctl {ping|get-state|prompt <msg>|sysprompt [show|set|clear]" +
+              "|subscribe <ch>|unsubscribe <ch>|list|set ping-mode <mode>}",
       );
   }
 }

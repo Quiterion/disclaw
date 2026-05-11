@@ -1,10 +1,11 @@
 /**
- * disclaw daemon — slice 2.5.
+ * disclaw daemon — slice 3.
  *
- * Embeds an Agent (pi-agent-core) directly in this process — no
- * pi subprocess, no JSONL framing. Otherwise the same shape as
- * slice 2: Unix socket control plane, persistent router state,
- * sysprompt slot, first-run bootstrap, three slice-1/2 commands.
+ * Embeds an Agent (pi-agent-core) directly in this process. Owns
+ * persistent router state (sysprompt slot, subscriptions, ping mode),
+ * runs first-run bootstrap, accepts ctl commands over a Unix socket,
+ * and routes incoming Discord events to the agent based on
+ * subscriptions + ping mode (slice 3c routing).
  *
  * Usage:
  *   npm run daemon
@@ -16,7 +17,8 @@ import { loadState, saveState, type RouterState } from "./state.js";
 import { maybeBootstrap, SANDBOX_DIR } from "./bootstrap.js";
 import { createBashTool } from "./tools/bash.js";
 import { DiscliProcess } from "./discli-io.js";
-import type { CtlRequest, CtlResponse, DaemonState } from "./protocol.js";
+import { routeDiscordEvent, type DiscliMessageEvent } from "./routing.js";
+import type { CtlRequest, CtlResponse, DaemonState, PingMode } from "./protocol.js";
 
 const PROVIDER = process.env.DISCLAW_PROVIDER ?? "anthropic";
 const MODEL = process.env.DISCLAW_MODEL ?? "claude-haiku-4-5";
@@ -35,14 +37,9 @@ async function main(): Promise<void> {
   const wasInitialized = state.initialized;
   const bootstrap = maybeBootstrap(state);
   state = bootstrap.state;
-  if (!wasInitialized) {
-    log(`first-run bootstrap: sandbox=${SANDBOX_DIR}`);
-  }
+  if (!wasInitialized) log(`first-run bootstrap: sandbox=${SANDBOX_DIR}`);
   saveState(state);
 
-  // ── Sandbox cwd for the agent's bash tool ──────────────────────────
-  // Make sure it exists (bootstrap creates it on first run, but on
-  // restart with existing state we still need it to be there).
   if (!existsSync(SANDBOX_DIR)) mkdirSync(SANDBOX_DIR, { recursive: true });
 
   // ── Build the agent ────────────────────────────────────────────────
@@ -74,6 +71,19 @@ async function main(): Promise<void> {
     log(`[event] ${event.type}`);
   });
 
+  // ── Routing helper ──────────────────────────────────────────────────
+  // Translates a routing decision into the right AgentHost call,
+  // depending on whether the agent is currently idle.
+  function deliverToAgent(mode: "push" | "follow_up", userMessage: string): void {
+    if (host.isIdle) {
+      // All modes collapse to prompt when idle (per design doc).
+      host.prompt(userMessage).catch((err) => log(`[deliver-error] ${err.message}`));
+      return;
+    }
+    if (mode === "push") host.steer(userMessage);
+    else host.followUp(userMessage);
+  }
+
   // ── Control plane ───────────────────────────────────────────────────
   const handler = async (req: CtlRequest): Promise<CtlResponse> => {
     log(`[ctl] ${req.cmd} req_id=${req.req_id}`);
@@ -87,14 +97,14 @@ async function main(): Promise<void> {
             isStreaming: host.isStreaming,
             isCompacting: host.isCompacting,
             isIdle: host.isIdle,
-            rpc: {
-              messageCount: host.agent.state.messages.length,
-            },
+            rpc: { messageCount: host.agent.state.messages.length },
           },
           router: {
             initialized: state.initialized,
             sysprompt_set: state.sysprompt.length > 0,
             sysprompt_chars: state.sysprompt.length,
+            subscriptions: [...state.subscriptions],
+            ping_mode: state.ping_mode,
           },
         };
         return { req_id: req.req_id, ok: true, result: out };
@@ -105,35 +115,70 @@ async function main(): Promise<void> {
           return {
             req_id: req.req_id,
             ok: false,
-            error: `agent not idle (isStreaming=${host.isStreaming}); slice 2.5 only handles idle prompts`,
+            error: `agent not idle (isStreaming=${host.isStreaming})`,
           };
         }
-        // Fire and forget — events stream as the agent processes.
-        host.prompt(req.message).catch((err) => {
-          log(`[prompt-error] ${err.message}`);
-        });
+        host.prompt(req.message).catch((err) => log(`[prompt-error] ${err.message}`));
         return { req_id: req.req_id, ok: true, result: { accepted: true } };
       }
 
       case "sysprompt-show":
-        return {
-          req_id: req.req_id,
-          ok: true,
-          result: { value: state.sysprompt },
-        };
+        return { req_id: req.req_id, ok: true, result: { value: state.sysprompt } };
 
-      case "sysprompt-set": {
+      case "sysprompt-set":
         state = { ...state, sysprompt: req.value };
         saveState(state);
         host.updateSysprompt(req.value);
         return { req_id: req.req_id, ok: true, result: { chars: req.value.length } };
-      }
 
-      case "sysprompt-clear": {
+      case "sysprompt-clear":
         state = { ...state, sysprompt: "" };
         saveState(state);
         host.updateSysprompt("");
         return { req_id: req.req_id, ok: true };
+
+      case "subscribe":
+        if (!state.subscriptions.includes(req.channel_id)) {
+          state = { ...state, subscriptions: [...state.subscriptions, req.channel_id] };
+          saveState(state);
+        }
+        return {
+          req_id: req.req_id,
+          ok: true,
+          result: { subscriptions: state.subscriptions },
+        };
+
+      case "unsubscribe":
+        state = {
+          ...state,
+          subscriptions: state.subscriptions.filter((c) => c !== req.channel_id),
+        };
+        saveState(state);
+        return {
+          req_id: req.req_id,
+          ok: true,
+          result: { subscriptions: state.subscriptions },
+        };
+
+      case "list-subscriptions":
+        return {
+          req_id: req.req_id,
+          ok: true,
+          result: { subscriptions: state.subscriptions },
+        };
+
+      case "set-ping-mode": {
+        const valid: PingMode[] = ["push", "follow_up", "none"];
+        if (!valid.includes(req.mode)) {
+          return {
+            req_id: req.req_id,
+            ok: false,
+            error: `ping-mode must be one of: ${valid.join(", ")}`,
+          };
+        }
+        state = { ...state, ping_mode: req.mode };
+        saveState(state);
+        return { req_id: req.req_id, ok: true, result: { ping_mode: req.mode } };
       }
 
       default: {
@@ -151,20 +196,26 @@ async function main(): Promise<void> {
   let discli: DiscliProcess | undefined;
   if (DISCORD_TOKEN) {
     try {
-      discli = new DiscliProcess({
-        token: DISCORD_TOKEN,
-        events: ["messages"],
-      });
+      discli = new DiscliProcess({ token: DISCORD_TOKEN, events: ["messages"] });
       log(`[discli] spawned`);
       discli.on("event", (event: any) => {
-        // Slice 3b: just log incoming Discord events. Routing happens in 3c.
         if (event.event === "message") {
+          const msgEvent = event as DiscliMessageEvent;
+          const decision = routeDiscordEvent(msgEvent, {
+            subscriptions: new Set(state.subscriptions),
+            ping_mode: state.ping_mode,
+          });
+          if (decision.kind === "drop") {
+            log(
+              `[discord-drop] [#${msgEvent.channel}] ${msgEvent.author}: ${decision.reason}`,
+            );
+            return;
+          }
           log(
-            `[discord] [${event.server}/#${event.channel}] ${event.author}: ` +
-              `${(event.content ?? "").slice(0, 80)}` +
-              (event.mentions_bot ? " (mentions bot)" : "") +
-              (event.is_dm ? " (dm)" : ""),
+            `[discord-deliver] mode=${decision.mode} class=${decision.class} ` +
+              `from=${msgEvent.author} #${msgEvent.channel}`,
           );
+          deliverToAgent(decision.mode, decision.userMessage);
         } else if (event.event === "ready") {
           log(`[discord] ready as ${event.bot_name} (${event.bot_id})`);
         } else if (event.event === "error") {
@@ -184,14 +235,13 @@ async function main(): Promise<void> {
       log(`[discli] continuing without Discord side`);
     }
   } else {
-    log(`[discli] DISCORD_TOKEN not set; skipping discli — Discord side disabled`);
+    log(`[discli] DISCORD_TOKEN not set; Discord side disabled`);
   }
 
   const ctl = new ControlServer(handler);
   await ctl.listen();
   log(`listening at ${SOCKET_PATH}`);
 
-  // ── Send first-run prompt if applicable ─────────────────────────────
   if (bootstrap.firstRunPrompt !== null) {
     log(`[bootstrap] sending first-run prompt`);
     host.prompt(bootstrap.firstRunPrompt).catch((err) => {

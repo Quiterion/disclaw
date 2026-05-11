@@ -6,6 +6,8 @@
  * each slice lands.
  */
 
+export type PingMode = "push" | "follow_up" | "none";
+
 // ── Requests (ctl → daemon) ──────────────────────────────────────────────
 
 export type CtlRequest =
@@ -14,7 +16,11 @@ export type CtlRequest =
   | { cmd: "prompt"; req_id: string; message: string }
   | { cmd: "sysprompt-show"; req_id: string }
   | { cmd: "sysprompt-set"; req_id: string; value: string }
-  | { cmd: "sysprompt-clear"; req_id: string };
+  | { cmd: "sysprompt-clear"; req_id: string }
+  | { cmd: "subscribe"; req_id: string; channel_id: string }
+  | { cmd: "unsubscribe"; req_id: string; channel_id: string }
+  | { cmd: "list-subscriptions"; req_id: string }
+  | { cmd: "set-ping-mode"; req_id: string; mode: PingMode };
 
 export type CtlCmdName = CtlRequest["cmd"];
 
@@ -41,7 +47,6 @@ export interface DaemonState {
     isStreaming: boolean;
     isCompacting: boolean;
     isIdle: boolean;
-    /** Pi's view of state, fetched on demand (slice 1: included for parity). */
     rpc?: {
       sessionId?: string;
       sessionFile?: string;
@@ -52,7 +57,8 @@ export interface DaemonState {
   router: {
     initialized: boolean;
     sysprompt_set: boolean;
-    /** Length of sysprompt content; full content via sysprompt-show */
     sysprompt_chars: number;
+    subscriptions: string[];
+    ping_mode: PingMode;
   };
 }

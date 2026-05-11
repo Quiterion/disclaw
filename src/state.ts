@@ -20,14 +20,22 @@ export const RUNTIME_DIR = process.env.DISCLAW_RUNTIME_DIR ?? join(homedir(), ".
 export const STATE_FILE = join(RUNTIME_DIR, "state.json");
 export const SYSPROMPT_FILE = process.env.DISCLAW_SYSPROMPT_FILE ?? join(RUNTIME_DIR, "sysprompt.txt");
 
+import type { PingMode } from "./protocol.js";
+
 export interface RouterState {
   initialized: boolean;
   sysprompt: string;
+  /** Set of Discord channel IDs the agent has subscribed to. */
+  subscriptions: string[];
+  /** How pings (mentions/DMs) are delivered. Opt-in: defaults to "none". */
+  ping_mode: PingMode;
 }
 
 const DEFAULT_STATE: RouterState = {
   initialized: false,
   sysprompt: "",
+  subscriptions: [],
+  ping_mode: "none",
 };
 
 function ensureDir(path: string): void {

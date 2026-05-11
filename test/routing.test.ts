@@ -1,0 +1,141 @@
+/**
+ * Routing logic tests — no LLM, no daemon, no Discord. Pure functions.
+ *
+ * Run: npm test
+ */
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { routeDiscordEvent, type DiscliMessageEvent, type RoutingState } from "../src/routing.js";
+
+function makeEvent(overrides: Partial<DiscliMessageEvent> = {}): DiscliMessageEvent {
+  return {
+    event: "message",
+    message_id: "msg-1",
+    channel_id: "C-100",
+    channel: "general",
+    server: "Test Server",
+    server_id: "S-1",
+    author: "alice",
+    author_id: "U-alice",
+    content: "hello",
+    is_bot: false,
+    mentions_bot: false,
+    is_dm: false,
+    timestamp: "2026-05-12T00:00:00Z",
+    ...overrides,
+  };
+}
+
+function makeState(overrides: Partial<RoutingState> = {}): RoutingState {
+  return {
+    subscriptions: new Set(),
+    ping_mode: "none",
+    ...overrides,
+  };
+}
+
+// ── Drop cases ──────────────────────────────────────────────────────────
+
+test("non-mention in unsubscribed channel: drop", () => {
+  const decision = routeDiscordEvent(makeEvent(), makeState());
+  assert.equal(decision.kind, "drop");
+});
+
+test("ping with ping-mode=none: drop", () => {
+  const decision = routeDiscordEvent(
+    makeEvent({ mentions_bot: true }),
+    makeState({ ping_mode: "none" }),
+  );
+  assert.equal(decision.kind, "drop");
+});
+
+// ── Subscribed channel ──────────────────────────────────────────────────
+
+test("non-mention in subscribed channel: follow_up channel delivery", () => {
+  const decision = routeDiscordEvent(
+    makeEvent(),
+    makeState({ subscriptions: new Set(["C-100"]) }),
+  );
+  assert.equal(decision.kind, "deliver");
+  if (decision.kind !== "deliver") return;
+  assert.equal(decision.class, "channel");
+  assert.equal(decision.mode, "follow_up");
+  assert.match(decision.userMessage, /\[Test Server \/ #general\] alice: hello/);
+});
+
+// ── Pings ───────────────────────────────────────────────────────────────
+
+test("mention with ping-mode=push: push, truncated when long", () => {
+  const longContent = "x".repeat(300);
+  const decision = routeDiscordEvent(
+    makeEvent({ mentions_bot: true, content: longContent }),
+    makeState({ ping_mode: "push" }),
+  );
+  assert.equal(decision.kind, "deliver");
+  if (decision.kind !== "deliver") return;
+  assert.equal(decision.class, "ping");
+  assert.equal(decision.mode, "push");
+  assert.match(decision.userMessage, /\[ping\]/);
+  assert.match(decision.userMessage, /…/);
+  assert.match(decision.userMessage, /full via `disclaw-ctl history/);
+});
+
+test("mention with ping-mode=push: short content, no truncation tail", () => {
+  const decision = routeDiscordEvent(
+    makeEvent({ mentions_bot: true, content: "hey opus" }),
+    makeState({ ping_mode: "push" }),
+  );
+  assert.equal(decision.kind, "deliver");
+  if (decision.kind !== "deliver") return;
+  assert.doesNotMatch(decision.userMessage, /full via/);
+  assert.doesNotMatch(decision.userMessage, /…/);
+});
+
+test("mention with ping-mode=follow_up: follow_up, full content", () => {
+  const decision = routeDiscordEvent(
+    makeEvent({ mentions_bot: true, content: "hi can you take a look at this?" }),
+    makeState({ ping_mode: "follow_up" }),
+  );
+  assert.equal(decision.kind, "deliver");
+  if (decision.kind !== "deliver") return;
+  assert.equal(decision.class, "ping");
+  assert.equal(decision.mode, "follow_up");
+  assert.match(decision.userMessage, /\[ping\]/);
+  assert.match(decision.userMessage, /hi can you take a look at this/);
+});
+
+test("DM: routes through ping path regardless of subscriptions", () => {
+  const decision = routeDiscordEvent(
+    makeEvent({ is_dm: true, channel: "DM-with-alice" }),
+    makeState({ ping_mode: "follow_up" }),
+  );
+  assert.equal(decision.kind, "deliver");
+  if (decision.kind !== "deliver") return;
+  assert.equal(decision.class, "ping");
+  assert.match(decision.userMessage, /DM/);
+});
+
+// ── Pings on subscribed channels: still ping path ───────────────────────
+
+test("mention in subscribed channel: still routes as ping (not channel stream)", () => {
+  const decision = routeDiscordEvent(
+    makeEvent({ mentions_bot: true }),
+    makeState({
+      subscriptions: new Set(["C-100"]),
+      ping_mode: "follow_up",
+    }),
+  );
+  assert.equal(decision.kind, "deliver");
+  if (decision.kind !== "deliver") return;
+  assert.equal(decision.class, "ping");
+});
+
+// ── Bot-authored messages: NOT filtered ─────────────────────────────────
+
+test("bot-authored message in subscribed channel: delivered (not filtered)", () => {
+  const decision = routeDiscordEvent(
+    makeEvent({ is_bot: true, author: "OtherBot" }),
+    makeState({ subscriptions: new Set(["C-100"]) }),
+  );
+  assert.equal(decision.kind, "deliver");
+});
