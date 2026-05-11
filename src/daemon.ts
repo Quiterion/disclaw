@@ -15,10 +15,12 @@ import { ControlServer, SOCKET_PATH } from "./control.js";
 import { loadState, saveState, type RouterState } from "./state.js";
 import { maybeBootstrap, SANDBOX_DIR } from "./bootstrap.js";
 import { createBashTool } from "./tools/bash.js";
+import { DiscliProcess } from "./discli-io.js";
 import type { CtlRequest, CtlResponse, DaemonState } from "./protocol.js";
 
 const PROVIDER = process.env.DISCLAW_PROVIDER ?? "anthropic";
 const MODEL = process.env.DISCLAW_MODEL ?? "claude-haiku-4-5";
+const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 
 function log(...args: unknown[]): void {
   const ts = new Date().toISOString();
@@ -145,6 +147,46 @@ async function main(): Promise<void> {
     }
   };
 
+  // ── Discli (Discord side) ───────────────────────────────────────────
+  let discli: DiscliProcess | undefined;
+  if (DISCORD_TOKEN) {
+    try {
+      discli = new DiscliProcess({
+        token: DISCORD_TOKEN,
+        events: ["messages"],
+      });
+      log(`[discli] spawned`);
+      discli.on("event", (event: any) => {
+        // Slice 3b: just log incoming Discord events. Routing happens in 3c.
+        if (event.event === "message") {
+          log(
+            `[discord] [${event.server}/#${event.channel}] ${event.author}: ` +
+              `${(event.content ?? "").slice(0, 80)}` +
+              (event.mentions_bot ? " (mentions bot)" : "") +
+              (event.is_dm ? " (dm)" : ""),
+          );
+        } else if (event.event === "ready") {
+          log(`[discord] ready as ${event.bot_name} (${event.bot_id})`);
+        } else if (event.event === "error") {
+          log(`[discord] error: ${event.message ?? "(no message)"}`);
+        } else if (event.event === "disconnected") {
+          log(`[discord] disconnected: code=${event.code ?? "?"} reason=${event.reason ?? "(none)"}`);
+        } else {
+          log(`[discord] event=${event.event}`);
+        }
+      });
+      discli.on("error", (err: Error) => log(`[discli-error] ${err.message}`));
+      discli.on("exit", ({ code, signal }: { code: number | null; signal: string | null }) =>
+        log(`[discli-exit] code=${code} signal=${signal}`),
+      );
+    } catch (err: any) {
+      log(`[discli] failed to spawn: ${err?.message ?? err}`);
+      log(`[discli] continuing without Discord side`);
+    }
+  } else {
+    log(`[discli] DISCORD_TOKEN not set; skipping discli — Discord side disabled`);
+  }
+
   const ctl = new ControlServer(handler);
   await ctl.listen();
   log(`listening at ${SOCKET_PATH}`);
@@ -164,6 +206,7 @@ async function main(): Promise<void> {
     shuttingDown = true;
     log(`shutting down (code=${code})`);
     await ctl.shutdown();
+    if (discli) await discli.shutdown();
     await host.shutdown();
     process.exit(code);
   }
