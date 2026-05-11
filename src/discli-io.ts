@@ -18,7 +18,8 @@ import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { attachJsonlLineReader } from "./jsonl.js";
+import { randomUUID } from "node:crypto";
+import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "..");
@@ -40,10 +41,16 @@ export interface DiscliProcessOptions {
   excludeSelf?: boolean;
 }
 
+interface PendingResponse {
+  resolve: (value: any) => void;
+  reject: (err: Error) => void;
+}
+
 export class DiscliProcess extends EventEmitter {
   private readonly bin: string;
   private readonly proc: ChildProcess;
   private exited = false;
+  private pending = new Map<string, PendingResponse>();
 
   constructor(opts: DiscliProcessOptions) {
     super();
@@ -63,9 +70,9 @@ export class DiscliProcess extends EventEmitter {
     if (opts.excludeSelf) args.push("--no-include-self");
 
     this.proc = spawn(this.bin, args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      // discli wants DISCORD_BOT_TOKEN; we also pass DISCORD_TOKEN since
-      // many setups use that name.
+      // stdin must be piped — discli serve reads JSONL actions from
+      // stdin (sendAction writes to it) and exits if stdin is closed.
+      stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, DISCORD_BOT_TOKEN: opts.token, DISCORD_TOKEN: opts.token },
     });
 
@@ -73,6 +80,11 @@ export class DiscliProcess extends EventEmitter {
 
     this.proc.on("exit", (code, signal) => {
       this.exited = true;
+      // Fail any pending action calls
+      for (const p of this.pending.values()) {
+        p.reject(new Error(`discli exited (code=${code} signal=${signal}) before response`));
+      }
+      this.pending.clear();
       this.emit("exit", { code, signal });
     });
 
@@ -92,12 +104,57 @@ export class DiscliProcess extends EventEmitter {
         this.emit("parseError", { line, err });
         return;
       }
+
+      // Route response events to the matching pending action call.
+      if (parsed.event === "response" && typeof parsed.req_id === "string") {
+        const pending = this.pending.get(parsed.req_id);
+        if (pending) {
+          this.pending.delete(parsed.req_id);
+          if (parsed.error !== undefined) {
+            pending.reject(new Error(String(parsed.error)));
+          } else {
+            pending.resolve(parsed);
+          }
+          return;
+        }
+      }
+
       this.emit("event", parsed);
     });
   }
 
   get isRunning(): boolean {
     return !this.exited;
+  }
+
+  /**
+   * Send an action to discli and await its response (correlated by req_id).
+   * Auto-assigns a req_id; throws if discli has exited or returns an error.
+   */
+  sendAction<T = any>(
+    action: { action: string; [k: string]: any },
+    opts: { timeoutMs?: number } = {},
+  ): Promise<T> {
+    if (this.exited) return Promise.reject(new Error("discli has exited"));
+    const req_id = action.req_id ?? randomUUID();
+    const timeoutMs = opts.timeoutMs ?? 15_000;
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(req_id);
+        reject(new Error(`discli action ${action.action} timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      this.pending.set(req_id, {
+        resolve: (v) => {
+          clearTimeout(timer);
+          resolve(v);
+        },
+        reject: (e) => {
+          clearTimeout(timer);
+          reject(e);
+        },
+      });
+      this.proc.stdin!.write(serializeJsonLine({ ...action, req_id }));
+    });
   }
 
   async shutdown(): Promise<void> {

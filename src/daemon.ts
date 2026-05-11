@@ -22,11 +22,19 @@ import type { CtlRequest, CtlResponse, DaemonState, PingMode } from "./protocol.
 
 const PROVIDER = process.env.DISCLAW_PROVIDER ?? "anthropic";
 const MODEL = process.env.DISCLAW_MODEL ?? "claude-haiku-4-5";
-const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
+const DISCORD_TOKEN = process.env.DISCORD_BOT_TOKEN ?? process.env.DISCORD_TOKEN;
 
 function log(...args: unknown[]): void {
   const ts = new Date().toISOString();
   process.stderr.write(`[disclaw ${ts}] ${args.map(String).join(" ")}\n`);
+}
+
+function discordUnavailable(req_id: string): CtlResponse {
+  return {
+    req_id,
+    ok: false,
+    error: "Discord side disabled (DISCORD_TOKEN not set or discli failed to spawn)",
+  };
 }
 
 async function main(): Promise<void> {
@@ -179,6 +187,35 @@ async function main(): Promise<void> {
         state = { ...state, ping_mode: req.mode };
         saveState(state);
         return { req_id: req.req_id, ok: true, result: { ping_mode: req.mode } };
+      }
+
+      case "discord-send": {
+        if (!discli) return discordUnavailable(req.req_id);
+        const result = await discli.sendAction({
+          action: "send",
+          channel_id: req.channel_id,
+          content: req.content,
+        });
+        return { req_id: req.req_id, ok: true, result };
+      }
+
+      case "discord-history": {
+        if (!discli) return discordUnavailable(req.req_id);
+        const result = await discli.sendAction({
+          action: "message_list",
+          channel_id: req.channel_id,
+          ...(req.limit ? { limit: req.limit } : {}),
+        });
+        return { req_id: req.req_id, ok: true, result };
+      }
+
+      case "discord-channels": {
+        if (!discli) return discordUnavailable(req.req_id);
+        const result = await discli.sendAction({
+          action: "channel_list",
+          ...(req.guild_id ? { guild_id: req.guild_id } : {}),
+        });
+        return { req_id: req.req_id, ok: true, result };
       }
 
       default: {

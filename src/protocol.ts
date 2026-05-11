@@ -20,7 +20,10 @@ export type CtlRequest =
   | { cmd: "subscribe"; req_id: string; channel_id: string }
   | { cmd: "unsubscribe"; req_id: string; channel_id: string }
   | { cmd: "list-subscriptions"; req_id: string }
-  | { cmd: "set-ping-mode"; req_id: string; mode: PingMode };
+  | { cmd: "set-ping-mode"; req_id: string; mode: PingMode }
+  | { cmd: "discord-send"; req_id: string; channel_id: string; content: string }
+  | { cmd: "discord-history"; req_id: string; channel_id: string; limit?: number }
+  | { cmd: "discord-channels"; req_id: string; guild_id?: string };
 
 export type CtlCmdName = CtlRequest["cmd"];
 

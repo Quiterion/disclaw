@@ -102,6 +102,33 @@ function parseArgs(argv: string[]): CtlRequest {
       break;
     }
 
+    case "send": {
+      // disclaw-ctl send <channel_id> <content...>
+      const channel_id = rest[0];
+      const content = rest.slice(1).join(" ");
+      if (!channel_id || !content) {
+        die('usage: disclaw-ctl send <channel_id> <content...>');
+      }
+      return { cmd: "discord-send", req_id: reqId, channel_id, content };
+    }
+
+    case "history": {
+      // disclaw-ctl history <channel_id> [limit]
+      const channel_id = rest[0];
+      if (!channel_id) die("usage: disclaw-ctl history <channel_id> [limit]");
+      const limit = rest[1] ? parseInt(rest[1], 10) : undefined;
+      if (limit !== undefined && Number.isNaN(limit)) {
+        die("history limit must be an integer");
+      }
+      return { cmd: "discord-history", req_id: reqId, channel_id, limit };
+    }
+
+    case "channels": {
+      // disclaw-ctl channels [guild_id]
+      const guild_id = rest[0];
+      return { cmd: "discord-channels", req_id: reqId, guild_id };
+    }
+
     default:
       die(
         cmd
