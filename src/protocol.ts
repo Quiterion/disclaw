@@ -2,8 +2,8 @@
  * Control-plane protocol between disclaw-ctl and the disclaw daemon.
  *
  * One JSON object per line over a Unix socket. Every request has a
- * cmd field; the response echoes the same req_id. Slice 1 supports
- * three commands (ping, get-state, prompt); more added in later slices.
+ * cmd field; the response echoes the same req_id. Commands grow as
+ * each slice lands.
  */
 
 // ── Requests (ctl → daemon) ──────────────────────────────────────────────
@@ -11,7 +11,10 @@
 export type CtlRequest =
   | { cmd: "ping"; req_id: string }
   | { cmd: "get-state"; req_id: string }
-  | { cmd: "prompt"; req_id: string; message: string };
+  | { cmd: "prompt"; req_id: string; message: string }
+  | { cmd: "sysprompt-show"; req_id: string }
+  | { cmd: "sysprompt-set"; req_id: string; value: string }
+  | { cmd: "sysprompt-clear"; req_id: string };
 
 export type CtlCmdName = CtlRequest["cmd"];
 
@@ -45,5 +48,11 @@ export interface DaemonState {
       messageCount?: number;
       pendingMessageCount?: number;
     };
+  };
+  router: {
+    initialized: boolean;
+    sysprompt_set: boolean;
+    /** Length of sysprompt content; full content via sysprompt-show */
+    sysprompt_chars: number;
   };
 }
