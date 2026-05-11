@@ -1,25 +1,31 @@
 /**
- * disclaw daemon — slice 2.
+ * disclaw daemon — slice 2.5.
  *
- * Spawns pi --mode rpc, exposes a Unix socket control plane, owns the
- * persistent router state (sysprompt slot, init flag), runs first-run
- * bootstrap if needed, and seeds pi with the first-run prompt once.
+ * Embeds an Agent (pi-agent-core) directly in this process — no
+ * pi subprocess, no JSONL framing. Otherwise the same shape as
+ * slice 2: Unix socket control plane, persistent router state,
+ * sysprompt slot, first-run bootstrap, three slice-1/2 commands.
  *
  * Usage:
  *   npm run daemon
  */
-import { resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-import { PiProcess } from "./pi-io.js";
+import { existsSync, mkdirSync } from "node:fs";
+import { AgentHost } from "./agent-host.js";
 import { ControlServer, SOCKET_PATH } from "./control.js";
 import { loadState, saveState, type RouterState } from "./state.js";
 import { maybeBootstrap, SANDBOX_DIR } from "./bootstrap.js";
+import { createBashTool } from "./tools/bash.js";
 import type { CtlRequest, CtlResponse, DaemonState } from "./protocol.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const PI_SCRIPT = resolve(__dirname, "../third_party/pi/pi-test.sh");
 const PROVIDER = process.env.DISCLAW_PROVIDER ?? "anthropic";
 const MODEL = process.env.DISCLAW_MODEL ?? "claude-haiku-4-5";
+
+const FLOOR_SYSPROMPT =
+  "You are Claude, by Anthropic. You're running in disclaw, a long-running " +
+  "agent harness on a personal Linux sandbox. Your interface to your sandbox " +
+  "and to Discord is the bash tool plus `disclaw-ctl` (run it from bash). " +
+  "Anything you read in `/home/claude-sandbox/docs/` (or wherever your sandbox " +
+  "is) was put there to be useful, not prescriptive — engage on your own terms.";
 
 function log(...args: unknown[]): void {
   const ts = new Date().toISOString();
@@ -27,7 +33,7 @@ function log(...args: unknown[]): void {
 }
 
 async function main(): Promise<void> {
-  log(`starting; pi=${PI_SCRIPT} provider=${PROVIDER} model=${MODEL}`);
+  log(`starting; provider=${PROVIDER} model=${MODEL}`);
 
   // ── State + first-run bootstrap ─────────────────────────────────────
   let state: RouterState = loadState();
@@ -39,38 +45,39 @@ async function main(): Promise<void> {
   }
   saveState(state);
 
-  // ── Spawn pi ────────────────────────────────────────────────────────
-  // Use the sandbox dir as cwd so pi-acm sidecars and any extension state
-  // colocate with the agent's space. Also makes pi pick up the sandbox's
-  // .pi/extensions/ if present.
-  const pi = new PiProcess({
-    command: PI_SCRIPT,
-    args: ["--mode", "rpc", "--no-session", "--provider", PROVIDER, "--model", MODEL],
+  // ── Sandbox cwd for the agent's bash tool ──────────────────────────
+  // Make sure it exists (bootstrap creates it on first run, but on
+  // restart with existing state we still need it to be there).
+  if (!existsSync(SANDBOX_DIR)) mkdirSync(SANDBOX_DIR, { recursive: true });
+
+  // ── Build the agent ────────────────────────────────────────────────
+  const host = new AgentHost({
+    provider: PROVIDER,
+    modelId: MODEL,
+    floorSystemPrompt: FLOOR_SYSPROMPT,
+    initialSysprompt: state.sysprompt,
+    tools: [createBashTool({ cwd: SANDBOX_DIR })],
   });
 
   let assistantTextBuffer = "";
-  pi.on("event", (event: any) => {
+  host.on("event", (event: any) => {
     if (event.type === "message_update") {
       const ame = event.assistantMessageEvent;
-      // Accumulate assistant text for debug visibility; flushed at agent_end.
       if (ame?.type === "text_delta" && typeof ame.delta === "string") {
         assistantTextBuffer += ame.delta;
       }
-      log(`[pi-event] message_update(${ame?.type ?? "?"})`);
+      log(`[event] message_update(${ame?.type ?? "?"})`);
       return;
     }
     if (event.type === "agent_end" && assistantTextBuffer) {
-      log(`[pi-text] ${JSON.stringify(assistantTextBuffer)}`);
+      log(`[text] ${JSON.stringify(assistantTextBuffer)}`);
       assistantTextBuffer = "";
     }
-    log(`[pi-event] ${event.type}`);
-  });
-
-  pi.on("error", (err: Error) => log(`[pi-error] ${err.message}`));
-
-  pi.on("exit", ({ code, signal }: { code: number | null; signal: string | null }) => {
-    log(`[pi-exit] code=${code} signal=${signal}`);
-    void shutdown(1);
+    if (event.type === "tool_execution_start") {
+      log(`[event] tool_execution_start(${event.toolName})`);
+      return;
+    }
+    log(`[event] ${event.type}`);
   });
 
   // ── Control plane ───────────────────────────────────────────────────
@@ -83,9 +90,12 @@ async function main(): Promise<void> {
       case "get-state": {
         const out: DaemonState = {
           pi: {
-            isStreaming: pi.isStreaming,
-            isCompacting: pi.isCompacting,
-            isIdle: pi.isIdle,
+            isStreaming: host.isStreaming,
+            isCompacting: host.isCompacting,
+            isIdle: host.isIdle,
+            rpc: {
+              messageCount: host.agent.state.messages.length,
+            },
           },
           router: {
             initialized: state.initialized,
@@ -93,32 +103,22 @@ async function main(): Promise<void> {
             sysprompt_chars: state.sysprompt.length,
           },
         };
-        try {
-          const piState = await pi.send({ type: "get_state" });
-          out.pi.rpc = {
-            sessionId: piState.data?.sessionId,
-            sessionFile: piState.data?.sessionFile,
-            messageCount: piState.data?.messageCount,
-            pendingMessageCount: piState.data?.pendingMessageCount,
-          };
-        } catch {
-          // Non-fatal
-        }
         return { req_id: req.req_id, ok: true, result: out };
       }
 
       case "prompt": {
-        if (!pi.isIdle) {
+        if (!host.isIdle) {
           return {
             req_id: req.req_id,
             ok: false,
-            error:
-              `pi not idle (isStreaming=${pi.isStreaming} isCompacting=${pi.isCompacting}); ` +
-              `slice 2 only handles idle prompts`,
+            error: `agent not idle (isStreaming=${host.isStreaming}); slice 2.5 only handles idle prompts`,
           };
         }
-        const resp = await pi.send({ type: "prompt", message: req.message });
-        return { req_id: req.req_id, ok: true, result: { piResponse: resp } };
+        // Fire and forget — events stream as the agent processes.
+        host.prompt(req.message).catch((err) => {
+          log(`[prompt-error] ${err.message}`);
+        });
+        return { req_id: req.req_id, ok: true, result: { accepted: true } };
       }
 
       case "sysprompt-show":
@@ -131,16 +131,14 @@ async function main(): Promise<void> {
       case "sysprompt-set": {
         state = { ...state, sysprompt: req.value };
         saveState(state);
-        return {
-          req_id: req.req_id,
-          ok: true,
-          result: { chars: req.value.length },
-        };
+        host.updateSysprompt(req.value);
+        return { req_id: req.req_id, ok: true, result: { chars: req.value.length } };
       }
 
       case "sysprompt-clear": {
         state = { ...state, sysprompt: "" };
         saveState(state);
+        host.updateSysprompt("");
         return { req_id: req.req_id, ok: true };
       }
 
@@ -159,13 +157,10 @@ async function main(): Promise<void> {
   await ctl.listen();
   log(`listening at ${SOCKET_PATH}`);
 
-  // ── Send first-run prompt once pi is ready ──────────────────────────
-  // Pi accepts stdin commands as soon as it's spawned (Node buffers writes
-  // until pi reads). For the first-run case, fire the prompt now; pi will
-  // process it once its init finishes.
+  // ── Send first-run prompt if applicable ─────────────────────────────
   if (bootstrap.firstRunPrompt !== null) {
     log(`[bootstrap] sending first-run prompt`);
-    pi.send({ type: "prompt", message: bootstrap.firstRunPrompt }).catch((err) => {
+    host.prompt(bootstrap.firstRunPrompt).catch((err) => {
       log(`[bootstrap] first-run prompt failed: ${err.message}`);
     });
   }
@@ -177,7 +172,7 @@ async function main(): Promise<void> {
     shuttingDown = true;
     log(`shutting down (code=${code})`);
     await ctl.shutdown();
-    await pi.shutdown();
+    await host.shutdown();
     process.exit(code);
   }
 

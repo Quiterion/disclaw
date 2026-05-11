@@ -4,10 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "slice0": "node --import tsx --env-file=.env src/slice0.ts",
     "daemon": "node --import tsx --env-file=.env src/daemon.ts",
     "ctl": "node --import tsx src/ctl.ts",
     "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "file:./third_party/pi/packages/agent",
+    "@earendil-works/pi-ai": "file:./third_party/pi/packages/ai",
+    "typebox": "^1.1.24"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
