@@ -250,6 +250,7 @@ async function main(): Promise<void> {
           const decision = routeDiscordEvent(msgEvent, {
             subscriptions: new Set(state.subscriptions),
             ping_mode: state.ping_mode,
+            bot_id: discli?.botId,
           });
           if (decision.kind === "drop") {
             log(

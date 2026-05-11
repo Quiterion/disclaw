@@ -132,10 +132,36 @@ test("mention in subscribed channel: still routes as ping (not channel stream)",
 
 // ── Bot-authored messages: NOT filtered ─────────────────────────────────
 
-test("bot-authored message in subscribed channel: delivered (not filtered)", () => {
+test("other-bot-authored message in subscribed channel: delivered (not filtered)", () => {
   const decision = routeDiscordEvent(
-    makeEvent({ is_bot: true, author: "OtherBot" }),
-    makeState({ subscriptions: new Set(["C-100"]) }),
+    makeEvent({ is_bot: true, author: "OtherBot", author_id: "U-other-bot" }),
+    makeState({ subscriptions: new Set(["C-100"]), bot_id: "U-self" }),
   );
   assert.equal(decision.kind, "deliver");
+});
+
+test("self-authored message: dropped regardless of channel/mention", () => {
+  // Self in subscribed channel
+  let d = routeDiscordEvent(
+    makeEvent({ author_id: "U-self" }),
+    makeState({ subscriptions: new Set(["C-100"]), bot_id: "U-self" }),
+  );
+  assert.equal(d.kind, "drop");
+  if (d.kind !== "drop") return;
+  assert.match(d.reason, /self-message/);
+
+  // Self with self-mention (impossible in practice, defensive)
+  d = routeDiscordEvent(
+    makeEvent({ author_id: "U-self", mentions_bot: true }),
+    makeState({ ping_mode: "push", bot_id: "U-self" }),
+  );
+  assert.equal(d.kind, "drop");
+});
+
+test("self-filter requires bot_id; without it, self-messages flow through", () => {
+  const d = routeDiscordEvent(
+    makeEvent({ author_id: "U-self" }),
+    makeState({ subscriptions: new Set(["C-100"]) }), // no bot_id
+  );
+  assert.equal(d.kind, "deliver");
 });

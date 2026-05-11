@@ -41,6 +41,8 @@ export interface DiscliMessageEvent {
 export interface RoutingState {
   subscriptions: ReadonlySet<string>;
   ping_mode: PingMode;
+  /** The bot's own Discord user_id; messages from this author are dropped. */
+  bot_id?: string | null;
 }
 
 export type RoutingDecision =
@@ -89,6 +91,14 @@ export function routeDiscordEvent(
   ev: DiscliMessageEvent,
   state: RoutingState,
 ): RoutingDecision {
+  // Drop the bot's own messages — discli echoes them back as events when
+  // the bot sends to a subscribed channel; passing them through as user
+  // messages confuses attribution (the agent reads them as if a "user"
+  // is showing them their own send) and risks self-feedback loops.
+  if (state.bot_id && ev.author_id === state.bot_id) {
+    return { kind: "drop", reason: "self-message (bot's own send echoed)" };
+  }
+
   const isPing = ev.mentions_bot || ev.is_dm;
 
   if (isPing) {

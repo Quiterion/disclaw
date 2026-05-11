@@ -64,6 +64,13 @@ export class AgentHost extends EventEmitter {
     const piBin = opts.piBin ?? process.env.DISCLAW_PI_BIN ?? DEFAULT_PI_BIN;
     const cwd = opts.cwd ?? REPO_ROOT;
 
+    // Make `disclaw-ctl` discoverable in the agent's bash by prepending
+    // bin/ to PATH. (E2E test caught the agent doing `find ~ -name disclaw*`
+    // because `disclaw-ctl send` returned "command not found" — small
+    // friction, easy fix here.)
+    const binDir = resolve(REPO_ROOT, "bin");
+    const newPath = `${binDir}:${process.env.PATH ?? ""}`;
+
     this.pi = new PiProcess({
       command: piBin,
       args: [
@@ -73,6 +80,7 @@ export class AgentHost extends EventEmitter {
       ],
       env: {
         ...process.env,
+        PATH: newPath,
         DISCLAW_MODEL_NAME: this.modelName,
       },
       cwd,

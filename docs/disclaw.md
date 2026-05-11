@@ -141,6 +141,15 @@ Every Discord event the router sees lands in exactly one bucket:
 | message in unsubscribed channel (non-mention) | drop from message stream; counts toward activity digest | — |
 | activity digest (derived stream) | see "Delivery modes" | `follow_up` |
 | router-internal (idle nudge, system note) | always forward | `prompt` |
+| message authored by the bot itself | drop (filtered by `event.author_id === bot_id`) | — |
+
+**Self-message filter**: discli echoes the bot's own sends back as
+events when the bot writes to a subscribed channel. Routing drops these
+on `event.author_id === bot_id` (bot id captured from the discli `ready`
+event). Without this filter, the agent reads their own send as if a
+"user" is showing them their message — caught in slice-3 e2e: the agent
+treated their own echo as user-mediated confirmation, which is both a
+misattribution risk and a self-feedback hazard.
 
 **Note on first-run state**: ping-mode and digest-mode both start at
 `none`, and the subscriptions set is empty. The "mode" column above
@@ -152,6 +161,25 @@ subscribing to a channel doesn't collapse pings into normal stream traffic,
 and unsubscribed-channel pings still arrive (with a clear marker, see
 "Message format"). A ping never auto-subscribes the channel; the agent
 decides whether to subscribe in response.
+
+### Known limitation: role pings vs user mentions
+
+discli sets `mentions_bot=true` only when the bot's user_id appears in
+`<@user_id>` mention syntax. **Role pings** (`<@&role_id>`) — even on a
+role the bot has — do *not* trigger the flag. Currently these get
+routed as ordinary channel messages, which means:
+
+- If the bot is subscribed to that channel: delivered as a `follow_up`
+  channel-stream message, not as a ping
+- If the bot is not subscribed: dropped
+
+That's the wrong default for servers where "ping the AI role" is the
+normal way to reach the bot. The fix is to also treat role-mention
+events as pings when the bot has the role. Requires either: (a) discli
+to expose the bot's role memberships via the `ready` event, or (b) the
+router making a separate `member_info` API call at startup to fetch
+roles. Marked v2 — not blocking slice 3 since direct `<@bot>` mentions
+work correctly.
 
 ---
 

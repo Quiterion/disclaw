@@ -51,6 +51,8 @@ export class DiscliProcess extends EventEmitter {
   private readonly proc: ChildProcess;
   private exited = false;
   private pending = new Map<string, PendingResponse>();
+  /** Bot's user_id — set when discli emits the `ready` event. Null until then. */
+  private _botId: string | null = null;
 
   constructor(opts: DiscliProcessOptions) {
     super();
@@ -105,6 +107,11 @@ export class DiscliProcess extends EventEmitter {
         return;
       }
 
+      // Capture bot identity from the ready event for self-message filtering.
+      if (parsed.event === "ready" && typeof parsed.bot_id === "string") {
+        this._botId = parsed.bot_id;
+      }
+
       // Route response events to the matching pending action call.
       if (parsed.event === "response" && typeof parsed.req_id === "string") {
         const pending = this.pending.get(parsed.req_id);
@@ -125,6 +132,11 @@ export class DiscliProcess extends EventEmitter {
 
   get isRunning(): boolean {
     return !this.exited;
+  }
+
+  /** Bot's Discord user_id, available after the `ready` event. */
+  get botId(): string | null {
+    return this._botId;
   }
 
   /**
