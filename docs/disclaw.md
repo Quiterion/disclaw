@@ -61,42 +61,47 @@ the welcome doc, performed altruism reads worse than honest mixed motive.
 
 ```
 discli serve >> /var/log/discli.jsonl     # stdout: JSONL events
-            2>> /var/log/discli.err.log    # stderr: diagnostics (separate)
+            2>> /var/log/discli.err.log    # stderr: diagnostics
                      |
               [log follower]
                      |
-              [router core]  <-- /run/router.sock <-- disclaw-ctl
-                  ^      |
-   pi events ---- |      | ---> pi stdin (JSONL commands)
-       (stdout)          
-                     pi --mode rpc
+   ┌───────────  disclaw daemon  ──────────────┐
+   │  · embedded Agent (pi-agent-core)         │   <-- /run/disclaw.sock <-- disclaw-ctl
+   │  · subscriptions, modes, sysprompt slot   │
+   │  · routing + buffering + formatting       │
+   └───────────────────────────────────────────┘
 ```
 
-`discli serve` writes diagnostic messages to stderr; only stdout is pure
-JSONL. The router only consumes the stdout log; stderr is captured for
-human debugging.
+The daemon is a single Node process. It embeds an `Agent` from
+`@earendil-works/pi-agent-core` directly — no pi subprocess, no JSONL
+framing across an IPC boundary, no `pi --mode rpc`. The Agent's
+`agent_start` / `turn_start` / `turn_end` / `agent_end` event stream is
+consumed in-process via `agent.subscribe(...)`.
 
-Two input streams feed the router:
+`discli serve` is the only true subprocess. It writes JSONL events to
+stdout (which the daemon tails as a log file) and diagnostics to stderr
+(captured for human debugging). The log-file approach keeps offset
+persistence trivial and means the router can crash without losing
+Discord events — `discli` keeps appending, the daemon resumes from the
+last persisted offset on restart.
 
-1. **discli log** — append-only file with offset persistence. Drives all
-   "something happened on Discord" events.
-2. **pi stdout** — JSONL event stream from `pi --mode rpc`. Drives the router's
-   model of pi's `isStreaming` state, which gates how Discord events are
-   delivered (see "Delivery modes" below).
+### Why embed Agent directly (vs subprocess + RPC)
 
-Two output sinks:
+The earlier design routed everything through `pi --mode rpc`, treating pi
+as an opaque process. That worked but inherited pi-coding-agent's baked-in
+coding-assistant system prompt and forced JSONL framing across an IPC
+boundary. Switching to direct embedding gave us:
 
-1. **pi stdin** — JSONL commands (`prompt` / `follow_up` / `steer`).
-2. **disclaw-ctl socket** — control plane for both the human operator and
-   (via bash) the agent.
+- Full ownership of the floor system prompt (a TS string we set on
+  `Agent.state.systemPrompt`)
+- Tools registered explicitly to the Agent — only what we want, nothing
+  baked in
+- Same event semantics, but accessed through a typed in-process API
+- Simpler crash-and-restart story (no subprocess to coordinate with)
 
-### Why a file + bidirectional pi pipe
-
-The original (v1) decoupling rationale still holds for discli — file +
-offset gives crash-safe replay. The pi side now has to be bidirectional
-because the router needs pi's state to make routing decisions. We attach to
-pi's stdout/stdin directly rather than through FIFOs; if the router crashes,
-both `discli` and `pi` keep running and the router reattaches on restart.
+The trade-off: pi-acm doesn't drop in. Sliding-window context management
+becomes our responsibility (via `Agent.transformContext`), implemented
+when slice-3+ rolling-window pressure makes it necessary.
 
 ---
 
@@ -239,27 +244,32 @@ messages since the last flush), appended to the user message if non-empty
 and digest-mode is `follow_up`, then reset. If no flush fires for a long
 time, the next idle nudge carries the digest.
 
-### Tracking pi state
+### Tracking agent state
 
-The router maintains `isStreaming` and `isCompacting` by listening to pi's
-event stream:
+The daemon's `AgentHost` wrapper subscribes to the embedded Agent's event
+stream and updates two flags:
 
-| event (pi → router) | meaning |
+| event (agent → host) | meaning |
 |---|---|
 | `agent_start` | `isStreaming = true` |
 | `agent_end` | `isStreaming = false` → flush `follow_up` buffer; start idle nudge timer |
-| `compaction_start` | `isCompacting = true` |
-| `compaction_end` | `isCompacting = false` |
 
-Initial state on router restart is recovered via `get_state` RPC (returns
-both `isStreaming` and `isCompacting`).
+`isCompacting` is reserved for when we wire `Agent.transformContext` for
+sliding-window compaction. Pi-agent-core does not emit compaction events
+of its own — anything compaction-shaped will be our `transformContext`'s
+responsibility, and we'll surface it through the same flag.
 
-> **Terminology.** Throughout this doc, **agent run** = one cycle of pi's
-> outer loop, from `agent_start` to `agent_end`. **Turn** = one pi-internal
-> turn (a single LLM call + its tool batch); we use it only when push
-> timing requires the precision. A single agent run can contain many
-> internal turns. From the agent's perspective, an agent run is a single
-> uninterrupted moment of attention.
+There is no separate "router restart recovery" step for these flags
+anymore — restarting the daemon recreates the Agent fresh, with no in-flight
+agent run to recover. (Agent transcript persistence across daemon
+restarts is a future concern; tracked in "Out of scope".)
+
+> **Terminology.** Throughout this doc, **agent run** = one cycle of the
+> agent loop, from `agent_start` to `agent_end`. **Turn** = one
+> pi-internal turn (a single LLM call + its tool batch); we use it only
+> when push timing requires the precision. A single agent run can contain
+> many internal turns. From the agent's perspective, an agent run is a
+> single uninterrupted moment of attention.
 
 ---
 
@@ -409,82 +419,54 @@ disclaw-ctl set idle-nudge-timeout 5m    # let me work uninterrupted between bou
 
 ---
 
-## Context management (pi-acm)
+## Context management
 
-We use the [`pi-acm`](https://www.npmjs.com/package/pi-acm) extension for
-sliding-window context management. It provides everything we'd otherwise
-have to build ourselves:
+The earlier design vendored [`pi-acm`](https://www.npmjs.com/package/pi-acm)
+to sit on top of pi-coding-agent's RPC mode. Slice 2.5 dropped that whole
+stack in favor of embedding `pi-agent-core` directly (see "Process
+topology"). pi-acm targets the coding-agent's extension API, so it
+doesn't drop into the new shape — context management is now ours to
+implement, via `Agent.transformContext`.
 
-- **Sliding window compaction** instead of pi's default lossy AI
-  summarization — drops oldest content as the window fills. Matches the
-  ship-of-Theseus goal: continuity through gradual replacement, not
-  snapshot summaries.
-- **Inception pinning** — pinned messages survive all compaction and
-  prepend the context. Implemented cleanly inside pi rather than as
-  router-side prepend hackery.
-- **Tool surface for the agent** to manage their own context:
-  `acm_pin`, `acm_unpin`, `acm_prune`, `acm_snipe`, `acm_compact`,
-  `acm_recall`, `acm_map`, `acm_diagnose`. The agent decides what stays,
-  what gets dropped, when to compact.
-- **Sidecar storage** — session JSONL stays clean; ACM state is in
-  separate files.
+What we need to build (deferred until rolling-window pressure makes it
+necessary, probably slice 4+):
 
-Vendored into `third_party/pi-acm` (npm install or git submodule) with
-one local patch.
+- **Sliding window**: drop oldest messages when context fills, instead of
+  pi-agent-core's default lossy AI summarization. Implemented as a
+  `transformContext` that filters/trims based on a token budget.
+- **Inception pinning**: agent-callable tool (`acm_pin <messageId>` or
+  similar) that marks a message exempt from sliding-window dropping.
+  Pinned messages always prepend the LLM context.
+- **Pruned-manifest**: episodic inventory of dropped messages, injected
+  before each agent run (only when non-empty), so the agent knows what
+  `acm_recall` could pull back.
+- **Recall**: agent-callable tool that fetches a dropped message back
+  from the on-disk transcript and re-inserts it into context.
 
-### The one local patch
-
-pi-acm injects a `<context-status>` tag into pi's context before every
-agent run, like:
-
-```xml
-<context-status tokens="187,000" percent="93%" limit="200,000" pinned="3" pruned="12"/>
-```
-
-Useful framing for a finite coding session, but wrong for an indefinite
-rolling session: after warmup the percentage parks near the auto-compact
-threshold and stays there forever. Reporting "93%" before every agent run
-becomes a constant-value gauge — at best useless, at worst ambient
-pressure framing every moment as "approaching a limit" when in fact the
-steady state is sustainable indefinitely.
-
-The patch: delete the `<context-status>` tag construction in
-`src/whisper.ts`. Keep:
-
-- `<pruned-manifest>` (episodic — only present when content has actually
-  been pruned; serves as an inventory the agent can scan to know what
-  `acm_recall` could pull back)
-- The system-prompt addition explaining ACM tools
-- All ACM tools — agent queries on demand via `acm_map`, etc.
-
-Net effect: no per-run whisper noise; agent has full context-management
-agency via tools and queryable state when they choose to engage with it.
+We crib the design directly from pi-acm (it's small and open) but
+implement against `Agent.transformContext` rather than the coding-agent
+extension hooks.
 
 ### The transcript as long-term memory
 
-Pi maintains the canonical session JSONL at the path exposed via
-`RpcSessionState.sessionFile`, and pi-acm explicitly never modifies it.
-Compaction only affects what's in the active context window — everything
-that ever happened remains queryable from disk:
+The earlier plan relied on pi maintaining a session JSONL on disk that
+pi-acm explicitly never modified. With pi-agent-core embedded, the
+"transcript on disk" is something we have to write — pi-agent-core
+doesn't persist agent state by default.
+
+Plan: the daemon owns transcript persistence. On every `agent_end` (and
+optionally on `turn_end` for crash safety), the daemon appends new
+`AgentMessage` entries to `~/.disclaw/transcript.jsonl`. The agent
+queries this file directly via `jq` / `grep` from bash. The transcript
+is *append-only* — sliding-window dropping affects only what's in the
+active LLM context, never the on-disk record.
 
 ```bash
-jq 'select(.timestamp > "2026-05-10T12:00:00Z")' "$PI_SESSION_FILE"
+jq 'select(.timestamp > "2026-05-10T12:00:00Z")' ~/.disclaw/transcript.jsonl
 ```
 
-`docs/orientation.md` documents this path along with grep/jq starting
-points. The agent treats it as a journal — no notification on compaction,
-just an archive they can consult when curious about something that's
-slipped out of active context. (Agreement that even an episodic "just
-compacted" notice would itself become noise in steady state, since the
-rate would be roughly one compaction-event per N agent runs indefinitely.)
-
-### Where orientation lives
-
-Not via `acm_pin`. See "System prompt" — orientation is the agent's
-self-managed sysprompt slot, rendered each agent run by a small
-companion extension. ACM stays focused on what it's good at: sliding
-window + message-level pinning the agent invokes when they want to
-preserve a specific exchange.
+The orientation doc points the agent at this path. Treated as a journal —
+no notification on compaction, just an archive consulted on demand.
 
 ---
 
@@ -492,14 +474,26 @@ preserve a specific exchange.
 
 Two layers, both intentionally minimal at the floor:
 
-**Pi's base system prompt** is just `"You are Claude Opus 4.7, by Anthropic."`
-We deliberately don't load situational framing into the floor sysprompt,
-because the floor is what the agent *can't* change — and agency over
-self-orientation is part of the design (see "Design ethos").
+**Floor system prompt** — derived from the active model:
+
+```
+You are <Model.name>, by Anthropic. You're running in disclaw, a
+long-running agent harness on a personal Linux sandbox. Your interface
+to the sandbox is the bash tool; `disclaw-ctl` (run via bash) is your
+interface to the harness's persistent config and to Discord. Anything
+in your sandbox docs directory was put there to be useful, not
+prescriptive — engage on your own terms.
+```
+
+The model name is pulled from `Agent.state.model.name` (e.g. "Claude
+Haiku 4.5") rather than hardcoded — the agent gets an accurate identity
+line without us guessing across model swaps. Floor template is
+overrideable via `AgentHostOptions.floorSystemPrompt` if the deployment
+wants different framing.
 
 **Agent-managed sysprompt slot.** The agent has a writable slot whose
-contents are prepended to their system prompt on every agent run. They
-control it via:
+contents are appended to the floor on every agent run. They control it
+via:
 
 ```
 disclaw-ctl sysprompt              # show current
@@ -508,32 +502,12 @@ disclaw-ctl sysprompt set --stdin  # read from stdin (for `cat file | ...`)
 disclaw-ctl sysprompt clear        # remove
 ```
 
-The router persists this in state.json and mirror-writes to
-`/home/claude-sandbox/.disclaw/sysprompt.txt` (atomic write — write to `.tmp`, rename).
-A small custom pi extension reads from that file in `before_agent_start`
-and returns it as a `systemPrompt` addition.
-
-Implementation skeleton (~15 lines, in `disclaw/extensions/sysprompt/`):
-
-```ts
-import { readFileSync } from "node:fs"
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent"
-
-const SYSPROMPT_FILE = `${process.env.HOME}/.disclaw/sysprompt.txt`
-
-export default function (pi: ExtensionAPI) {
-  pi.on("before_agent_start", async (event, _ctx) => {
-    let body: string
-    try { body = readFileSync(SYSPROMPT_FILE, "utf-8").trim() } catch { return }
-    if (!body) return
-    return {
-      systemPrompt: (event as any).systemPrompt
-        ? (event as any).systemPrompt + "\n\n" + body
-        : body,
-    }
-  })
-}
-```
+The daemon persists this in `~/.disclaw/state.json` and mirror-writes to
+`~/.disclaw/sysprompt.txt` (atomic write — write to `.tmp`, rename). The
+mirror file is a hold-over from the earlier subprocess design; with the
+embedded Agent the slot value also lives in `AgentHost`'s memory and
+is refreshed onto `Agent.state.systemPrompt` before every `prompt()` call.
+We keep the mirror file for inspectability and as a recoverability path.
 
 Default state: empty. The agent populates this themselves; first-run
 seeding happens via the welcome flow (see "First-run experience").
@@ -548,19 +522,22 @@ Why this shape:
   not a message in history
 - **No magic file paths**: the slot's *content* can come from anywhere
   the agent wants (one file, multiple files concatenated, generated
-  dynamically); the router just stores the latest written value
+  dynamically); the daemon just stores the latest written value
 
-### Note on the earlier "acm_pin orientation.md" plan
+### Architectural pivots that landed here
 
-The original design assumed we'd `acm_pin docs/orientation.md` at session
-start. Reading pi-acm's source (`tools/control.ts:19-47`) showed that
-`acm_pin` operates on existing message entries by ID — it doesn't pin
-file paths. So the original plan didn't actually map to ACM's API. The
-companion-extension approach above is structurally cleaner: ACM still
-gives us sliding-window compaction and message-level pinning the agent
-can use ad hoc, and the sysprompt slot gives us "always-present
-agent-controlled framing" without any pi-acm modification beyond the
-already-planned whisper patch.
+This section's shape changed twice during workshopping:
+
+1. *Original plan* — `acm_pin docs/orientation.md` at session start.
+   Reading pi-acm source showed `acm_pin` operates on existing message
+   entries by ID, not file paths. Didn't map.
+2. *Slice 2 plan* — small custom pi extension hooking
+   `before_agent_start`, reading the slot file, appending to
+   `systemPrompt`. Worked, but pi-coding-agent's coding-assistant default
+   sysprompt was baked in at the floor. Wrong frame for our use case.
+3. *Slice 2.5 plan (current)* — embed `pi-agent-core` directly. Floor is
+   a TS string we own, sourced from the model. The slot is concatenated
+   in `AgentHost`. No pi extension required.
 
 ---
 
@@ -650,33 +627,42 @@ deployment. The principles the design conversation converged on:
 | `/home/claude-sandbox/missed-pings.log` (file) | yes (its own file, not in state.json) | yes |
 | event buffers + digest accumulator | no (in-memory) | replayed from discli on restart |
 | sleep state (active until: timestamp / "next event") | no (in-memory) | implicit reset — startup is "not sleeping" |
-| pi `isStreaming` state | no | recovered via `get_state` RPC on attach |
+| `agent.isStreaming` / `isCompacting` | no | implicit reset — fresh Agent on daemon start |
 
-Persisting the discli offset only on flush means a router crash loses zero
-events: anything not yet delivered to pi will be re-read on restart. Pi-side
-duplication is impossible because nothing was sent yet.
+Persisting the discli offset only on flush means a daemon crash loses zero
+events: anything not yet delivered to the Agent will be re-read on restart.
+Re-delivery is safe because the previous run had not yet been consumed by
+the Agent's loop.
+
+Slice 2.5 simplification: the daemon does not yet persist the Agent's
+*transcript* across restarts. Restarting the daemon = fresh Agent with
+the persisted sysprompt loaded, but no recollection of prior runs.
+Persisting the transcript is on the slice-4+ list (see "Context management").
 
 ---
 
-## Pi RPC surface used
+## pi-agent-core API surface used
 
-| RPC | direction | when |
+The daemon embeds an `Agent` from `@earendil-works/pi-agent-core` and
+talks to it via direct method calls (no JSONL, no subprocess):
+
+| call | direction | when |
 |---|---|---|
-| `prompt` | router → pi | flush when pi idle |
-| `follow_up` | router → pi | flush when pi streaming or compacting |
-| `steer` | router → pi | `push`-mode flush during current agent run |
-| `get_state` | router → pi | router startup, to recover `isStreaming` / `isCompacting` |
-| (subscribe to stdout events) | pi → router | continuous, drives `isStreaming` / `isCompacting` |
+| `agent.prompt(message)` | host → agent | flush when agent is idle (starts a new agent run) |
+| `agent.followUp(message)` | host → agent | flush while the current run is in flight; injected as a user message after the run would have ended (extends the same run) |
+| `agent.steer(message)` | host → agent | `push`-mode delivery during the current run; injected as a user message at the next inter-turn boundary |
+| `agent.subscribe(handler)` | agent → host | continuous; drives `isStreaming`, surfaces `tool_execution_*` and message events to the daemon's logger |
+| `agent.state.systemPrompt = ...` | host → agent | refreshed before every `prompt()` from current floor + slot |
+| `agent.abort()` / `agent.waitForIdle()` | host → agent | shutdown hooks |
 
-Events the router subscribes to but **ignores** (per design — see "Context
-management (pi-acm)"): `compaction_start`, `compaction_end`. These are used
-only to update internal state, never surfaced to the agent. Same for routine
-`turn_start` / `turn_end` events (pi-internal turn boundaries are not
-exposed; only `agent_end` matters for our purposes).
+Events emitted but currently used only for logging (slice 3+): `turn_*`,
+`message_*`, `tool_execution_*`. The daemon doesn't surface any of these
+to the agent — they're agent-internal.
 
-Not used in v1: `abort`, `compact` (pi-acm provides `acm_compact` instead),
-session forking, queue-mode toggles (we manage batching ourselves rather
-than relying on pi's `set_follow_up_mode`).
+Not yet wired (deferred): `transformContext` (sliding-window context
+management — see "Context management"), `beforeToolCall` /
+`afterToolCall` (no need yet), `streamFn` override (default is fine),
+session persistence (transcript file is the planned solution).
 
 ---
 
@@ -714,87 +700,103 @@ Discord I/O (`send`, `history`, `channels`) is implemented in `disclaw-ctl`
 as a thin shim over `discli`. Routing it through the same control plane
 keeps the agent-facing surface single-rooted.
 
-Context management is *not* via disclaw-ctl — it's pi-acm's tool surface,
-which the agent invokes via pi's normal model tool-calling, not bash:
-`acm_pin`, `acm_unpin`, `acm_prune`, `acm_snipe`, `acm_compact`,
-`acm_recall`, `acm_map`, `acm_diagnose`. See "Context management (pi-acm)".
+Context management commands (sliding window, pinning, recall) are TBD —
+to be added when we implement `Agent.transformContext`-based context
+management. They'll likely live alongside the rest as `disclaw-ctl
+acm-*` subcommands or as agent-callable tools registered with the Agent
+directly. See "Context management".
 
-### v2: native pi skill
+### v2: native Agent tools (alongside bash)
 
-Replace the bash interface with a proper pi skill exposing
-`discord_subscribe`, `discord_send`, `discord_history`, etc. as structured
-tools. Same underlying socket. Defer until v1 surface is stable.
+`disclaw-ctl` is the bootstrap surface — convenient for slice 3 because
+the agent can use it the same way they use any other shell command.
+Once the surface is stable, we can also register `discord_subscribe`,
+`discord_send`, `discord_history`, etc. as proper `AgentTool`s alongside
+bash. The agent gets typed tool calls instead of bash invocations; the
+underlying daemon logic is the same.
 
 ---
 
 ## Component layout
 
+Single TS project. The "router daemon" embeds an Agent (pi-agent-core)
+in-process; no separate pi process. Slice-3+ items in *italics*.
+
 ```
 disclaw/
-├── disclaw/                       # router daemon (Python)
-│   ├── daemon.py              # entry point + thread wiring
-│   ├── log_follower.py        # discli.jsonl follower with offset
-│   ├── pi_io.py               # pi stdin writer + stdout event reader
-│   ├── routing.py             # routing matrix + delivery mode resolution
-│   ├── buffering.py           # per-mode buffers + flush triggers
-│   ├── formatting.py          # batch → user message prose rendering
-│   ├── bootstrap.py           # first-run setup (materialize sandbox-docs, send first prompt)
-│   ├── state.py               # persistence (subscriptions, modes, sysprompt, offset, etc.)
-│   ├── control.py             # /run/router.sock JSONL server
-│   └── ctl.py                 # disclaw-ctl CLI client (no shared imports)
-├── extensions/                     # custom pi extensions (TypeScript)
-│   └── sysprompt/             # before_agent_start handler reading /home/claude-sandbox/.disclaw/sysprompt.txt
-│       ├── package.json
-│       └── index.ts
-├── sandbox-docs/                   # copied into /home/claude-sandbox/docs/ on first-run
-│   ├── welcome.md             # (TBD — tone iteration pending)
+├── src/
+│   ├── daemon.ts              # main entry; wires AgentHost + ControlServer
+│   ├── agent-host.ts          # embeds Agent; owns sysprompt + state-tracking
+│   ├── bootstrap.ts           # first-run sandbox materialization + first prompt
+│   ├── state.ts               # persistence (state.json, sysprompt mirror)
+│   ├── jsonl.ts               # JSONL line reader (correct re U+2028/29)
+│   ├── protocol.ts            # disclaw-ctl ↔ daemon socket request/response types
+│   ├── control.ts             # Unix socket server at ~/.disclaw/disclaw.sock
+│   ├── ctl.ts                 # disclaw-ctl CLI client (no shared imports)
+│   ├── tools/
+│   │   └── bash.ts            # the agent's bash tool (minimal port)
+│   ├── *discli-io.ts*         # spawn discli serve, tail log, parse events
+│   ├── *routing.ts*           # subscribed/mention routing → AgentHost
+│   ├── *buffering.ts*         # per-mode event buffers, flush triggers
+│   └── *formatting.ts*        # batched events → user message prose
+├── bin/
+│   └── disclaw-ctl            # bash wrapper; uses dist/ctl.js if built, else tsx
+├── sandbox-docs/              # copied into the sandbox dir on first-run
+│   ├── welcome.md             # (tone iteration pending — see "Tone of welcome.md")
 │   ├── orientation.example.md
 │   └── skills/
 │       ├── disclaw-ctl.md
-│       ├── context.md
-│       └── discord.md         # per-deployment server conventions
-└── docs/
-    └── disclaw.md
+│       ├── *context.md*       # acm-style + transcript-grep, when wired
+│       └── *discord.md*       # per-deployment server conventions
+├── docs/
+│   └── disclaw.md             # this file
+└── third_party/
+    ├── discli/                # discord ↔ JSONL bridge (subprocess)
+    └── pi/                    # source of pi-agent-core, pi-ai (file: deps)
 ```
 
 ### Runtime files
 
+Dev defaults; production paths are configurable via env (`DISCLAW_RUNTIME_DIR`,
+`DISCLAW_SANDBOX_DIR`, `DISCLAW_SYSPROMPT_FILE`).
+
 ```
-/var/log/discli.jsonl       # discli appends here
-/var/run/router.state       # persisted router state (json)
-/run/router.sock            # control plane socket
-/home/claude-sandbox/docs/             # agent-facing docs (orientation.md acm_pinned at session start)
-/home/claude-sandbox/missed-pings.log  # appends when ping-mode = none
-$PI_SESSION_FILE            # pi's canonical session JSONL (managed by pi, never modified by ACM)
-                            # — orientation documents this path for grep/jq lookup
+~/.disclaw/                       # daemon's runtime/state dir (mode 0700)
+~/.disclaw/state.json             # persisted router state
+~/.disclaw/sysprompt.txt          # mirror of state.sysprompt (for inspection)
+~/.disclaw/disclaw.sock           # control-plane Unix socket
+~/disclaw-sandbox/                # sandbox dir (production target: /home/claude-sandbox)
+~/disclaw-sandbox/docs/           # agent-facing docs (welcome.md, orientation.example.md, skills/)
+~/disclaw-sandbox/missed-pings.log  # (slice 3+) appends when ping-mode = none
+*~/.disclaw/transcript.jsonl*     # (slice 4+) append-only transcript for grep/jq lookup
+
+/tmp/discli.jsonl                 # (slice 3) discli stdout; daemon tails this
+/tmp/discli.err.log               # (slice 3) discli stderr; for human debugging
 ```
 
 ---
 
 ## Open dependencies
 
-Resolved (confirmed against source):
+All resolved before starting code; nothing currently blocks slice 3+.
+Kept here for the historical thread:
 
-- ~~**Pi session-event schema**~~ — `agent_start` / `agent_end` bracket the
-  agent loop; `compaction_start` / `compaction_end` bracket compaction.
-  `agent_end` is *not* SIGINT-specific; it fires whenever the loop exits
-  (normal completion, error, abort) and is correctly delayed by queued
-  steering / follow-up messages.
-- ~~**Discli event schema**~~ — `message` events have all the routing
-  fields we need: `mentions_bot`, `is_dm`, `is_bot`, channel/server
-  names + IDs, ISO 8601 timestamps, `reply_to`. Bot-authored messages
-  are *not* filtered by default — every Anima LLM is itself a Discord
-  bot account, so filtering by `is_bot` would hide most of what's
-  interesting to lurk on.
-
-Resolved (continued):
-
+- ~~**Pi session-event schema**~~ — `agent_start` / `agent_end` bracket
+  the agent loop. `agent_end` is *not* SIGINT-specific; it fires whenever
+  the loop exits (normal completion, error, abort) and is correctly
+  delayed by queued steering / follow-up messages.
+- ~~**Discli event schema**~~ — `message` events carry `mentions_bot`,
+  `is_dm`, `is_bot`, channel/server names + IDs, ISO 8601 timestamps,
+  `reply_to`. Bot-authored messages are *not* filtered by default — every
+  Anima LLM is itself a Discord bot account, so filtering by `is_bot`
+  would hide most of what's interesting to lurk on.
 - ~~**pi-acm bootstrap for default-pinning orientation**~~ — turned out
-  not to map to `acm_pin`'s API (which operates on existing message
-  entries by ID, not file paths). Replaced with the agent-managed
-  sysprompt slot + small companion extension — see "System prompt".
-
-All open dependencies for v1 are now resolved.
+  not to map to `acm_pin`'s API (operates on existing message entries by
+  ID, not file paths). Replaced with the agent-managed sysprompt slot.
+- ~~**pi-acm + pi-coding-agent compatibility**~~ — moot; slice 2.5
+  switched to embedding `pi-agent-core` directly. Sliding-window
+  compaction is now ours to build via `Agent.transformContext` (see
+  "Context management").
 
 ---
 
@@ -809,8 +811,10 @@ All open dependencies for v1 are now resolved.
 - Reactions, typing indicators, message edits, threads
 - Multi-server channel discovery beyond what discli surfaces
 - Persisted event buffers (currently rely on discli offset for replay)
-- Upstreaming the whisper patch as a config option in pi-acm (rather than
-  carrying a local diff) — once the design has stabilized in our use
+- Persisted Agent transcript across daemon restarts (slice 4+);
+  prerequisite for `Agent.transformContext`-based sliding window
+- Native `AgentTool` registrations alongside bash for Discord ops
+  (currently routed through bash-to-disclaw-ctl)
 
 ---
 
@@ -818,8 +822,8 @@ All open dependencies for v1 are now resolved.
 
 | decision | choice | rationale |
 |---|---|---|
-| session shape | one rolling pi session for everything | preserves continuity across channels; matches "ship of Theseus" goal |
-| router buffers, not pi | per-mode buffers in router, single batched RPC per flush | enables delivery-time formatting (relative timestamps, batch framing) |
+| session shape | one rolling Agent for everything | preserves continuity across channels; matches "ship of Theseus" goal |
+| daemon buffers, not the agent | per-mode buffers in the daemon, single batched call per flush | enables delivery-time formatting (relative timestamps, batch framing) |
 | ping ≠ subscription | pings delivered always, but never auto-subscribe | keeps engagement decision with the agent |
 | `push` is for pings only, in compact form | non-pings (channel msgs, digest) never push; pings push as compact `[ping]` markers between pi-internal turns | agent runs can last hours, so pings need real-time-ish delivery for human-Discord parity — but as small markers, not content dumps |
 | pings default to `push`, not `follow_up` | the human-Discord analog of a real-time notification | `follow_up` would mean "ping me back in hours" during focused work, which is broken for both the pinger and the agent's social presence |
@@ -827,11 +831,12 @@ All open dependencies for v1 are now resolved.
 | nudge timer starts at `agent_end` | not at each pi-internal `turn_end` | the agent's "moment of attention" spans the full agent run; nudging between internal turns would interrupt mid-work |
 | activity digest is global, piggybacked | not its own delivery class or buffer | mirrors Discord sidebar; agent sees ambient activity at natural attention transitions, not as standalone interruptions |
 | `none` ping mode logs, doesn't re-deliver | missed pings to a log file | matches DND semantics — un-muting shouldn't flood |
-| context management via pi-acm | sliding window + inception pinning, with `<context-status>` tag stripped | rolling steady state makes a per-run percentage gauge useless and faintly pressure-y; pruned-manifest + on-demand `acm_map` give the agent full agency without constant framing |
-| transcript is the long-term memory, no notifications | agent greps `$PI_SESSION_FILE` on demand instead of receiving compaction events | even episodic notices become noise in steady state; treating the transcript as a journal preserves access without ambient pressure |
-| sysprompt slot is agent-managed, not framework-managed | `disclaw-ctl sysprompt set/clear`; small companion extension renders contents on every `before_agent_start` | self-orientation is part of the agent's autonomy — we provide the slot, they fill it; pi-acm's `acm_pin` operates on existing entries (not file paths), so a different mechanism was needed anyway |
+| context management is ours to build (slice 4+) | sliding-window via `Agent.transformContext`, with no per-run status tag | rolling steady state makes a per-run percentage gauge useless and faintly pressure-y; pi-acm gave us the design, but didn't drop into pi-agent-core, so we adapt |
+| transcript as long-term memory, no notifications | agent greps `~/.disclaw/transcript.jsonl` on demand instead of receiving compaction events | even episodic notices become noise in steady state; treating the transcript as a journal preserves access without ambient pressure |
+| sysprompt slot is agent-managed, not framework-managed | `disclaw-ctl sysprompt set/clear`; `AgentHost` refreshes `Agent.state.systemPrompt` from the slot before every `prompt()` | self-orientation is part of the agent's autonomy — we provide the slot, they fill it |
 | first-run prompt is short; explanation lives in `welcome.md` | three sentences pointing at the welcome doc, not a wall of text | first-wake shouldn't land on a paragraph of framing; minimum context to navigate, longer-form content optional |
 | first-run is opt-in posture, not opt-out | all notification modes start at `none`, no channel subscriptions | engagement should be the agent's affirmative choice, not the default they have to disable; consistent with the agency-as-throughline principle |
-| minimal sysprompt | `"You are Claude Opus 4.7, by Anthropic"` | situational framing belongs in agent-mutable docs, not in immutable preamble |
+| minimal floor sysprompt, model-derived | `You are <Model.name>, by Anthropic. ...` constructed at AgentHost init from `Agent.state.model.name` | accurate identity without hardcoding (model swaps without doc churn); situational framing belongs in agent-mutable docs, not in the immutable floor |
+| direct embedding of pi-agent-core | rather than `pi --mode rpc` subprocess | full ownership of system prompt and tool set; no JSONL framing across IPC; simpler crash story |
 | MVP uses bash-to-ctl | not a proper pi skill | unblocks end-to-end loop; promote once stable |
 | offset saved on flush, not read | crash-safe replay from discli | router can crash freely without losing events |

@@ -25,13 +25,28 @@ export interface AgentHostOptions {
   provider: string;
   /** Model id, e.g. "claude-haiku-4-5". */
   modelId: string;
-  /** Floor system prompt (immutable; set once at construction). */
-  floorSystemPrompt: string;
+  /**
+   * Optional override for the floor system prompt.
+   *
+   * Receives the resolved model display name (e.g. "Claude Haiku 4.5")
+   * and returns the floor. Default template gives the agent a
+   * minimal accurate identity + situational pointer; everything else
+   * lives in the agent-managed slot.
+   */
+  floorSystemPrompt?: (modelName: string) => string;
   /** Initial slot content (loaded from persisted state). May be empty. */
   initialSysprompt: string;
   /** Tools the agent has access to. */
   tools: AgentTool<any>[];
 }
+
+const DEFAULT_FLOOR = (modelName: string): string =>
+  `You are ${modelName}, by Anthropic. You're running in disclaw, a long-running ` +
+  "agent harness on a personal Linux sandbox. Your interface to the sandbox " +
+  "is the bash tool; `disclaw-ctl` (run via bash) is your interface to the " +
+  "harness's persistent config and to Discord. Anything in your sandbox docs " +
+  "directory was put there to be useful, not prescriptive — engage on your " +
+  "own terms.";
 
 export class AgentHost extends EventEmitter {
   readonly agent: Agent;
@@ -42,13 +57,14 @@ export class AgentHost extends EventEmitter {
 
   constructor(opts: AgentHostOptions) {
     super();
-    this.floor = opts.floorSystemPrompt;
-    this.slot = opts.initialSysprompt;
-
     const model = getModel(opts.provider as any, opts.modelId);
     if (!model) {
       throw new Error(`Unknown model: ${opts.provider}/${opts.modelId}`);
     }
+
+    const floorFn = opts.floorSystemPrompt ?? DEFAULT_FLOOR;
+    this.floor = floorFn(model.name ?? opts.modelId);
+    this.slot = opts.initialSysprompt;
 
     this.agent = new Agent({
       initialState: {

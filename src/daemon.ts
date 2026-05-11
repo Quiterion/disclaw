@@ -20,13 +20,6 @@ import type { CtlRequest, CtlResponse, DaemonState } from "./protocol.js";
 const PROVIDER = process.env.DISCLAW_PROVIDER ?? "anthropic";
 const MODEL = process.env.DISCLAW_MODEL ?? "claude-haiku-4-5";
 
-const FLOOR_SYSPROMPT =
-  "You are Claude, by Anthropic. You're running in disclaw, a long-running " +
-  "agent harness on a personal Linux sandbox. Your interface to your sandbox " +
-  "and to Discord is the bash tool plus `disclaw-ctl` (run it from bash). " +
-  "Anything you read in `/home/claude-sandbox/docs/` (or wherever your sandbox " +
-  "is) was put there to be useful, not prescriptive — engage on your own terms.";
-
 function log(...args: unknown[]): void {
   const ts = new Date().toISOString();
   process.stderr.write(`[disclaw ${ts}] ${args.map(String).join(" ")}\n`);
@@ -54,7 +47,6 @@ async function main(): Promise<void> {
   const host = new AgentHost({
     provider: PROVIDER,
     modelId: MODEL,
-    floorSystemPrompt: FLOOR_SYSPROMPT,
     initialSysprompt: state.sysprompt,
     tools: [createBashTool({ cwd: SANDBOX_DIR })],
   });
