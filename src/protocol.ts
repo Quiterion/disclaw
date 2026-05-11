@@ -13,7 +13,6 @@ export type PingMode = "push" | "follow_up" | "none";
 export type CtlRequest =
   | { cmd: "ping"; req_id: string }
   | { cmd: "get-state"; req_id: string }
-  | { cmd: "prompt"; req_id: string; message: string }
   | { cmd: "sysprompt-show"; req_id: string }
   | { cmd: "sysprompt-set"; req_id: string; value: string }
   | { cmd: "sysprompt-clear"; req_id: string }

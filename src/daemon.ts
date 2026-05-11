@@ -1,11 +1,17 @@
 /**
- * disclaw daemon — slice 3.
+ * disclaw daemon — slice 3.5 (post pi-coding-agent revert).
  *
- * Embeds an Agent (pi-agent-core) directly in this process. Owns
- * persistent router state (sysprompt slot, subscriptions, ping mode),
- * runs first-run bootstrap, accepts ctl commands over a Unix socket,
- * and routes incoming Discord events to the agent based on
- * subscriptions + ping mode (slice 3c routing).
+ * Spawns pi-coding-agent as a subprocess via AgentHost (which wraps
+ * PiProcess). Owns persistent router state (sysprompt slot,
+ * subscriptions, ping mode), runs first-run bootstrap, accepts ctl
+ * commands over a Unix socket, and routes incoming Discord events to
+ * the agent based on subscriptions + ping mode.
+ *
+ * Pi-side gives us: session persistence (transcript on disk),
+ * pi-acm-compatible context management, the full pi tool catalog
+ * (read/write/edit/grep/bash). Our `.pi/extensions/sysprompt/`
+ * REPLACES pi's default coding-assistant sysprompt with our own
+ * model-derived floor + agent-managed slot.
  *
  * Usage:
  *   npm run daemon
@@ -15,13 +21,13 @@ import { AgentHost } from "./agent-host.js";
 import { ControlServer, SOCKET_PATH } from "./control.js";
 import { loadState, saveState, type RouterState } from "./state.js";
 import { maybeBootstrap, SANDBOX_DIR } from "./bootstrap.js";
-import { createBashTool } from "./tools/bash.js";
 import { DiscliProcess } from "./discli-io.js";
 import { routeDiscordEvent, type DiscliMessageEvent } from "./routing.js";
 import type { CtlRequest, CtlResponse, DaemonState, PingMode } from "./protocol.js";
 
 const PROVIDER = process.env.DISCLAW_PROVIDER ?? "anthropic";
 const MODEL = process.env.DISCLAW_MODEL ?? "claude-haiku-4-5";
+const MODEL_NAME = process.env.DISCLAW_MODEL_NAME ?? "Claude Haiku 4.5";
 const DISCORD_TOKEN = process.env.DISCORD_BOT_TOKEN ?? process.env.DISCORD_TOKEN;
 
 function log(...args: unknown[]): void {
@@ -51,11 +57,15 @@ async function main(): Promise<void> {
   if (!existsSync(SANDBOX_DIR)) mkdirSync(SANDBOX_DIR, { recursive: true });
 
   // ── Build the agent ────────────────────────────────────────────────
+  // Spawn pi-coding-agent with cwd = repo root so it auto-discovers
+  // .pi/extensions/sysprompt/ (which replaces pi's default sysprompt).
+  // Pi's bash tool will operate from this cwd by default; the agent
+  // can `cd ~/disclaw-sandbox` if they want to work in their sandbox.
   const host = new AgentHost({
     provider: PROVIDER,
     modelId: MODEL,
+    modelName: MODEL_NAME,
     initialSysprompt: state.sysprompt,
-    tools: [createBashTool({ cwd: SANDBOX_DIR })],
   });
 
   let assistantTextBuffer = "";
@@ -105,7 +115,6 @@ async function main(): Promise<void> {
             isStreaming: host.isStreaming,
             isCompacting: host.isCompacting,
             isIdle: host.isIdle,
-            rpc: { messageCount: host.agent.state.messages.length },
           },
           router: {
             initialized: state.initialized,
@@ -115,19 +124,19 @@ async function main(): Promise<void> {
             ping_mode: state.ping_mode,
           },
         };
-        return { req_id: req.req_id, ok: true, result: out };
-      }
-
-      case "prompt": {
-        if (!host.isIdle) {
-          return {
-            req_id: req.req_id,
-            ok: false,
-            error: `agent not idle (isStreaming=${host.isStreaming})`,
+        // Augment with pi's RPC-side state if reachable.
+        try {
+          const piState: any = await host.pi.send({ type: "get_state" });
+          out.pi.rpc = {
+            sessionId: piState.data?.sessionId,
+            sessionFile: piState.data?.sessionFile,
+            messageCount: piState.data?.messageCount,
+            pendingMessageCount: piState.data?.pendingMessageCount,
           };
+        } catch {
+          // Non-fatal — pi may have just exited or not responded yet.
         }
-        host.prompt(req.message).catch((err) => log(`[prompt-error] ${err.message}`));
-        return { req_id: req.req_id, ok: true, result: { accepted: true } };
+        return { req_id: req.req_id, ok: true, result: out };
       }
 
       case "sysprompt-show":

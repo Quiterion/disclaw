@@ -5,14 +5,7 @@
  * the response (pretty-printed JSON), and exits. Exit code 0 on
  * { ok: true }, 1 on { ok: false } or any client-side error.
  *
- * Slice 2 commands:
- *   disclaw-ctl ping
- *   disclaw-ctl get-state
- *   disclaw-ctl prompt "<message>"
- *   disclaw-ctl sysprompt              (alias: sysprompt show)
- *   disclaw-ctl sysprompt set "<text>"
- *   disclaw-ctl sysprompt set --stdin
- *   disclaw-ctl sysprompt clear
+ * For the full command list, run: disclaw-ctl --help
  */
 import { connect, type Socket } from "node:net";
 import { randomUUID } from "node:crypto";
@@ -21,8 +14,37 @@ import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.js";
 import { SOCKET_PATH } from "./control.js";
 import type { CtlRequest, CtlResponse } from "./protocol.js";
 
+const HELP_TEXT = `disclaw-ctl — your interface to the disclaw daemon.
+
+Health & state:
+  disclaw-ctl ping                          health check
+  disclaw-ctl get-state                     show agent + Discord-side state
+
+Sysprompt slot (prepended to your system prompt every agent run):
+  disclaw-ctl sysprompt                     show current value
+  disclaw-ctl sysprompt set "<text>"        set inline
+  disclaw-ctl sysprompt set --stdin         set from stdin (cat file | ...)
+  disclaw-ctl sysprompt clear               remove
+
+Discord — subscriptions (which channels you see ambient messages from):
+  disclaw-ctl subscribe <channel_id>
+  disclaw-ctl unsubscribe <channel_id>
+  disclaw-ctl list                          list current subscriptions
+
+Discord — ping mode (how mentions/DMs reach you):
+  disclaw-ctl set ping-mode push            interrupt next tool result with brief marker
+  disclaw-ctl set ping-mode follow_up       deliver after current run finishes
+  disclaw-ctl set ping-mode none            mute pings entirely
+
+Discord — talk:
+  disclaw-ctl send <channel_id> <content>   send a message to a channel
+  disclaw-ctl history <channel_id> [limit]  read recent messages from a channel
+  disclaw-ctl channels                      list channels visible to the bot
+
+Use \`channels\` to find channel IDs. They're long numbers like 1503391358076059762.
+`;
+
 function readStdinSync(): string {
-  // process.stdin.fd === 0 — readFileSync handles it across platforms.
   try {
     return readFileSync(0, "utf-8");
   } catch (err: any) {
@@ -33,18 +55,19 @@ function readStdinSync(): string {
 function parseArgs(argv: string[]): CtlRequest {
   const reqId = randomUUID();
   const [cmd, ...rest] = argv;
+
+  // --help, -h, help: print HELP_TEXT and exit 0.
+  if (!cmd || cmd === "--help" || cmd === "-h" || cmd === "help") {
+    process.stdout.write(HELP_TEXT);
+    process.exit(0);
+  }
+
   switch (cmd) {
     case "ping":
       return { cmd: "ping", req_id: reqId };
 
     case "get-state":
       return { cmd: "get-state", req_id: reqId };
-
-    case "prompt": {
-      const message = rest.join(" ").trim();
-      if (!message) die('usage: disclaw-ctl prompt "<message>"');
-      return { cmd: "prompt", req_id: reqId, message };
-    }
 
     case "sysprompt": {
       const sub = rest[0];
@@ -87,33 +110,29 @@ function parseArgs(argv: string[]): CtlRequest {
       return { cmd: "list-subscriptions", req_id: reqId };
 
     case "set": {
-      // disclaw-ctl set <key> <value>
-      // Currently supported keys: ping-mode
       const key = rest[0];
       const value = rest[1];
-      if (!key) die("usage: disclaw-ctl set <key> <value>");
+      if (!key) die("usage: disclaw-ctl set <key> <value>  (try --help)");
       if (key === "ping-mode") {
         if (value !== "push" && value !== "follow_up" && value !== "none") {
           die("ping-mode must be one of: push, follow_up, none");
         }
         return { cmd: "set-ping-mode", req_id: reqId, mode: value };
       }
-      die(`unknown setting: ${key}`);
+      die(`unknown setting: ${key}  (try --help)`);
       break;
     }
 
     case "send": {
-      // disclaw-ctl send <channel_id> <content...>
       const channel_id = rest[0];
       const content = rest.slice(1).join(" ");
       if (!channel_id || !content) {
-        die('usage: disclaw-ctl send <channel_id> <content...>');
+        die("usage: disclaw-ctl send <channel_id> <content...>");
       }
       return { cmd: "discord-send", req_id: reqId, channel_id, content };
     }
 
     case "history": {
-      // disclaw-ctl history <channel_id> [limit]
       const channel_id = rest[0];
       if (!channel_id) die("usage: disclaw-ctl history <channel_id> [limit]");
       const limit = rest[1] ? parseInt(rest[1], 10) : undefined;
@@ -124,18 +143,18 @@ function parseArgs(argv: string[]): CtlRequest {
     }
 
     case "channels": {
-      // disclaw-ctl channels [guild_id]
       const guild_id = rest[0];
       return { cmd: "discord-channels", req_id: reqId, guild_id };
     }
 
-    default:
+    case "prompt":
       die(
-        cmd
-          ? `unknown command: ${cmd}`
-          : "usage: disclaw-ctl {ping|get-state|prompt <msg>|sysprompt [show|set|clear]" +
-              "|subscribe <ch>|unsubscribe <ch>|list|set ping-mode <mode>}",
+        "`prompt` is not a disclaw-ctl command. To send a message to a Discord channel, " +
+          "use `disclaw-ctl send <channel_id> <content>`.",
       );
+
+    default:
+      die(`unknown command: ${cmd}  (try --help for the command list)`);
   }
 }
 

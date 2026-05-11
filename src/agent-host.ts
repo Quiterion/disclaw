@@ -1,24 +1,33 @@
 /**
- * AgentHost: thin wrapper around an embedded pi-agent-core Agent.
+ * AgentHost: wraps a `pi --mode rpc` subprocess via PiProcess.
  *
- * Replaces slice 1's PiProcess (which spawned `pi --mode rpc`). The
- * Agent runs in this same Node process; we own the system prompt
- * directly, register only the tools we want, and observe events via
- * the same agent_start / turn_start / turn_end / agent_end stream we
- * already verified in slice 0.
+ * Slice 3.5 revert: rolled back the slice-2.5 embedded-Agent approach.
+ * Pi-coding-agent (subprocess) gives us session persistence, pi-acm
+ * compatibility, and the full pi tool catalog (read/write/edit/grep/bash)
+ * for free. The system-prompt-control concern that motivated the pivot
+ * is addressed by `.pi/extensions/sysprompt/`, which REPLACES (not
+ * appends) pi-coding-agent's default sysprompt with our own model-derived
+ * floor + the agent's self-managed slot.
  *
- * Key changes from PiProcess:
- *   - No subprocess. No JSONL framing.
- *   - System prompt is `floor + (sysprompt slot ? "\n\n" + slot : "")`.
- *     Refreshed before every prompt() so writes to the slot take effect
- *     on the next agent_run (not retroactively, not silently).
- *   - Tools we explicitly register (slice 2.5: bash). Coding-agent's
- *     baked-in tools and system prompt are NOT in the picture.
+ * AgentHost preserves the same outward shape that the daemon already
+ * uses (prompt/followUp/steer/abort/waitForIdle/shutdown,
+ * isStreaming/isCompacting/isIdle, EventEmitter for `event`). The
+ * implementation underneath is now an RPC subprocess instead of an
+ * in-process Agent.
  */
 import { EventEmitter } from "node:events";
-import { Agent } from "@earendil-works/pi-agent-core";
-import type { AgentEvent, AgentTool } from "@earendil-works/pi-agent-core";
-import { getModel } from "@earendil-works/pi-ai";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { PiProcess } from "./pi-io.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = resolve(__dirname, "..");
+// Default: the npm-installed pi binary (shipped with our pi-acm peer dep
+// chain). We use the @mariozechner/* namespace because pi-acm was built
+// against that fork and references its packages at runtime; mixing with
+// the @earendil-works/* fork in third_party/pi/ would be a peer-dep
+// nightmare. Override via DISCLAW_PI_BIN if you want a different one.
+const DEFAULT_PI_BIN = resolve(REPO_ROOT, "node_modules/.bin/pi");
 
 export interface AgentHostOptions {
   /** Provider id, e.g. "anthropic". */
@@ -26,126 +35,124 @@ export interface AgentHostOptions {
   /** Model id, e.g. "claude-haiku-4-5". */
   modelId: string;
   /**
-   * Optional override for the floor system prompt.
-   *
-   * Receives the resolved model display name (e.g. "Claude Haiku 4.5")
-   * and returns the floor. Default template gives the agent a
-   * minimal accurate identity + situational pointer; everything else
-   * lives in the agent-managed slot.
+   * Display name for the model (e.g. "Claude Haiku 4.5"). Passed to the
+   * sysprompt extension via env var so the floor sysprompt identifies
+   * the right model. Falls back to modelId if not provided.
    */
-  floorSystemPrompt?: (modelName: string) => string;
-  /** Initial slot content (loaded from persisted state). May be empty. */
-  initialSysprompt: string;
-  /** Tools the agent has access to. */
-  tools: AgentTool<any>[];
+  modelName?: string;
+  /** Initial slot content (logged for diagnostics; not actually used). */
+  initialSysprompt?: string;
+  /**
+   * Working directory for the spawned pi process. Determines what cwd
+   * pi's tools default to and where pi looks for `.pi/extensions/` and
+   * `.pi/settings.json`. Default: this repo's root (so the project-local
+   * `.pi/extensions/sysprompt/` is discovered).
+   */
+  cwd?: string;
+  /** Path to pi binary. Default: node_modules/.bin/pi. */
+  piBin?: string;
 }
 
-const DEFAULT_FLOOR = (modelName: string): string =>
-  `You are ${modelName}, by Anthropic. You're running in disclaw, a long-running ` +
-  "agent harness on a personal Linux sandbox. Your interface to the sandbox " +
-  "is the bash tool; `disclaw-ctl` (run via bash) is your interface to the " +
-  "harness's persistent config and to Discord. Anything in your sandbox docs " +
-  "directory was put there to be useful, not prescriptive — engage on your " +
-  "own terms.";
-
 export class AgentHost extends EventEmitter {
-  readonly agent: Agent;
-  private readonly floor: string;
-  private slot: string;
-  private _isStreaming = false;
-  private _isCompacting = false; // pi-agent-core has no built-in compaction events; reserved for future transformContext-driven signal
+  readonly pi: PiProcess;
+  private readonly modelName: string;
 
   constructor(opts: AgentHostOptions) {
     super();
-    const model = getModel(opts.provider as any, opts.modelId);
-    if (!model) {
-      throw new Error(`Unknown model: ${opts.provider}/${opts.modelId}`);
-    }
+    this.modelName = opts.modelName ?? opts.modelId;
 
-    const floorFn = opts.floorSystemPrompt ?? DEFAULT_FLOOR;
-    this.floor = floorFn(model.name ?? opts.modelId);
-    this.slot = opts.initialSysprompt;
+    const piBin = opts.piBin ?? process.env.DISCLAW_PI_BIN ?? DEFAULT_PI_BIN;
+    const cwd = opts.cwd ?? REPO_ROOT;
 
-    this.agent = new Agent({
-      initialState: {
-        systemPrompt: this.buildSystemPrompt(),
-        model,
-        tools: opts.tools,
+    this.pi = new PiProcess({
+      command: piBin,
+      args: [
+        "--mode", "rpc",
+        "--provider", opts.provider,
+        "--model", opts.modelId,
+      ],
+      env: {
+        ...process.env,
+        DISCLAW_MODEL_NAME: this.modelName,
       },
+      cwd,
     });
 
-    this.agent.subscribe((event: AgentEvent) => {
-      if (event.type === "agent_start") this._isStreaming = true;
-      if (event.type === "agent_end") this._isStreaming = false;
-      this.emit("event", event);
-    });
+    // Forward pi's events. Daemon-side listener uses the same shape as
+    // before (event.type, event.assistantMessageEvent, etc.).
+    this.pi.on("event", (event: any) => this.emit("event", event));
+    this.pi.on("error", (err: Error) => this.emit("error", err));
+    this.pi.on("exit", (info) => this.emit("exit", info));
   }
 
   get isStreaming(): boolean {
-    return this._isStreaming;
+    return this.pi.isStreaming;
   }
 
   get isCompacting(): boolean {
-    return this._isCompacting;
+    return this.pi.isCompacting;
   }
 
   get isIdle(): boolean {
-    return !this._isStreaming && !this._isCompacting;
+    return this.pi.isIdle;
   }
 
-  get sysprompt(): string {
-    return this.slot;
-  }
-
-  /** Update the system-prompt slot. Takes effect on the next prompt(). */
-  updateSysprompt(newSlot: string): void {
-    this.slot = newSlot;
-  }
-
-  /** Refresh systemPrompt on the agent state from current floor + slot. */
-  private refreshSystemPrompt(): void {
-    this.agent.state.systemPrompt = this.buildSystemPrompt();
-  }
-
-  private buildSystemPrompt(): string {
-    return this.slot ? `${this.floor}\n\n${this.slot}` : this.floor;
+  /**
+   * Provided for backwards-compat with daemon code that expects an
+   * in-process agent state object. Returns minimal shape — full state
+   * is queryable via `pi.send({type: "get_state"})`.
+   */
+  get agent(): { state: { messages: unknown[] } } {
+    // Daemon's get-state reads .messages.length; in slice 3.5+ that's
+    // moved to a get_state RPC call. For now, return 0 — daemon should
+    // be migrated to use pi.send({type:"get_state"}) directly.
+    return { state: { messages: [] } };
   }
 
   /** Send a new prompt; throws if pi is not idle. */
   async prompt(message: string): Promise<void> {
     if (!this.isIdle) {
       throw new Error(
-        `agent not idle (isStreaming=${this._isStreaming} isCompacting=${this._isCompacting}); ` +
-          "use followUp() or steer() to queue while streaming",
+        `agent not idle (isStreaming=${this.pi.isStreaming} isCompacting=${this.pi.isCompacting})`,
       );
     }
-    this.refreshSystemPrompt();
-    await this.agent.prompt(message);
+    await this.pi.send({ type: "prompt", message });
   }
 
-  /** Queue a message for delivery after the current agent_run finishes. */
+  /** Queue a message to be delivered after the current agent run finishes. */
   followUp(message: string): void {
-    this.agent.followUp({ role: "user", content: message, timestamp: Date.now() });
+    this.pi.send({ type: "follow_up", message }).catch(() => {});
   }
 
-  /** Inject a message between turns within the current agent_run. */
+  /** Inject a message between turns within the current agent run. */
   steer(message: string): void {
-    this.agent.steer({ role: "user", content: message, timestamp: Date.now() });
+    this.pi.send({ type: "steer", message }).catch(() => {});
   }
 
   /** Abort the current run, if one is active. */
   abort(): void {
-    this.agent.abort();
+    this.pi.send({ type: "abort" }).catch(() => {});
   }
 
-  /** Wait for any current run + listeners to settle. */
+  /**
+   * The sysprompt slot lives in a file the extension reads on every
+   * agent_run. The daemon writes the file via state.saveState; this
+   * method exists for API parity but is a no-op (the file IS the
+   * source of truth, no in-memory mirror to update).
+   */
+  updateSysprompt(_newSlot: string): void {
+    // No-op — extension reads the file fresh each agent_run.
+  }
+
+  /** Wait for any current run to settle. */
   async waitForIdle(): Promise<void> {
-    await this.agent.waitForIdle();
+    while (!this.isIdle) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
   }
 
-  /** Best-effort shutdown — abort if streaming, then wait. */
+  /** Best-effort shutdown — closes pi cleanly. */
   async shutdown(): Promise<void> {
-    if (this._isStreaming) this.agent.abort();
-    await this.agent.waitForIdle();
+    await this.pi.shutdown();
   }
 }
