@@ -16,11 +16,10 @@
  * Usage:
  *   npm run daemon
  */
-import { existsSync, mkdirSync } from "node:fs";
 import { AgentHost } from "./agent-host.js";
 import { ControlServer, SOCKET_PATH } from "./control.js";
 import { loadState, saveState, type RouterState } from "./state.js";
-import { maybeBootstrap, SANDBOX_DIR } from "./bootstrap.js";
+import { maybeBootstrap } from "./bootstrap.js";
 import { DiscliProcess } from "./discli-io.js";
 import { routeDiscordEvent, type DiscliMessageEvent } from "./routing.js";
 import type { CtlRequest, CtlResponse, DaemonState, PingMode } from "./protocol.js";
@@ -47,20 +46,21 @@ async function main(): Promise<void> {
   log(`starting; provider=${PROVIDER} model=${MODEL}`);
 
   // ── State + first-run bootstrap ─────────────────────────────────────
+  // The daemon doesn't materialize a sandbox dir; deployment does that
+  // (Dockerfile / setup script cd's into $HOME before exec'ing us). For
+  // dev, run from a scratch dir. Bootstrap here is just the
+  // initialized-flag + first-run prompt.
   let state: RouterState = loadState();
   const wasInitialized = state.initialized;
   const bootstrap = maybeBootstrap(state);
   state = bootstrap.state;
-  if (!wasInitialized) log(`first-run bootstrap: sandbox=${SANDBOX_DIR}`);
+  if (!wasInitialized) log(`first-run bootstrap: cwd=${process.cwd()}`);
   saveState(state);
 
-  if (!existsSync(SANDBOX_DIR)) mkdirSync(SANDBOX_DIR, { recursive: true });
-
   // ── Build the agent ────────────────────────────────────────────────
-  // Spawn pi-coding-agent with cwd = repo root so it auto-discovers
-  // .pi/extensions/sysprompt/ (which replaces pi's default sysprompt).
-  // Pi's bash tool will operate from this cwd by default; the agent
-  // can `cd ~/disclaw-sandbox` if they want to work in their sandbox.
+  // Pi inherits this process's cwd. Extensions (our sysprompt + pi-acm)
+  // are loaded by absolute path in AgentHost so they don't depend on
+  // cwd.
   const host = new AgentHost({
     provider: PROVIDER,
     modelId: MODEL,

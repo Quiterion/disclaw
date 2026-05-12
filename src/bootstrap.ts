@@ -1,72 +1,41 @@
 /**
  * First-run bootstrap.
  *
- * If state.initialized is false:
- *   1. Materialize sandbox-docs/ into the agent's sandbox directory
- *   2. Mark state.initialized = true (caller persists)
- *   3. Return the first-run prompt for the daemon to send once pi is up
+ * The daemon doesn't materialize anything to a special "sandbox dir"
+ * anymore — that's a deployment concern. The agent's environment is
+ * whatever cwd the daemon was spawned in (which pi inherits when
+ * spawned). For dev: cd into a scratch dir before `npm run daemon`.
+ * For deployment: the dockerfile/script does `cd $HOME && exec`.
  *
- * Sandbox path is configurable via DISCLAW_SANDBOX_DIR; defaults to
- * ${HOME}/disclaw-sandbox for personal-dev use. Production target per
- * the design doc is /home/claude-sandbox; that's just a different value
- * for the same env var.
+ * What's left here: tracking whether the first-run prompt has been
+ * sent, and producing it. The prompt itself is deliberately neutral —
+ * "you are in pwd, look around" — since we don't know the layout of
+ * the agent's environment from inside the daemon.
  */
-import { existsSync, mkdirSync, readdirSync, statSync, copyFileSync } from "node:fs";
-import { join, resolve, dirname } from "node:path";
-import { homedir } from "node:os";
-import { fileURLToPath } from "node:url";
 import type { RouterState } from "./state.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = resolve(__dirname, "..");
-
-export const SANDBOX_DIR = process.env.DISCLAW_SANDBOX_DIR ?? join(homedir(), "disclaw-sandbox");
-export const SANDBOX_DOCS_SOURCE = join(REPO_ROOT, "docs/agent");
-
 export interface BootstrapResult {
-  /** The state to persist (includes initialized=true). */
+  /** State to persist (includes initialized=true once the prompt is queued). */
   state: RouterState;
-  /** First-run prompt to send to pi once it's up. Null if no bootstrap was needed. */
+  /** First-run prompt to send to pi once it's up. Null if already initialized. */
   firstRunPrompt: string | null;
 }
 
-function copyTreeRecursive(src: string, dst: string): void {
-  if (!existsSync(src)) {
-    throw new Error(`Source directory does not exist: ${src}`);
-  }
-  mkdirSync(dst, { recursive: true });
-  for (const entry of readdirSync(src)) {
-    const srcPath = join(src, entry);
-    const dstPath = join(dst, entry);
-    const stat = statSync(srcPath);
-    if (stat.isDirectory()) {
-      copyTreeRecursive(srcPath, dstPath);
-    } else if (stat.isFile()) {
-      // Don't overwrite existing files — agent may have edited them.
-      if (!existsSync(dstPath)) {
-        copyFileSync(srcPath, dstPath);
-      }
-    }
-  }
-}
+/**
+ * Verbatim from docs/dev/first_run_notes.md — the user's preferred
+ * first-run prompt wording. Three sentences, deliberately minimal,
+ * lets the agent discover their environment via `pwd` / `ls`.
+ */
+const FIRST_RUN_PROMPT =
+  "Hi. You're in a long-running agent harness. You are in `pwd`. " +
+  "There is a welcome doc at `welcome.md`.";
 
 export function maybeBootstrap(state: RouterState): BootstrapResult {
   if (state.initialized) {
     return { state, firstRunPrompt: null };
   }
-
-  // Create sandbox dir and seed docs
-  mkdirSync(SANDBOX_DIR, { recursive: true });
-  const docsDst = join(SANDBOX_DIR, "docs");
-  copyTreeRecursive(SANDBOX_DOCS_SOURCE, docsDst);
-
-  const welcomePath = join(SANDBOX_DIR, "docs", "welcome.md");
-  const firstRunPrompt =
-    `Hi. You're in a long-running agent harness. You are in \`${SANDBOX_DIR}\`. ` +
-    `There is a welcome doc at \`${welcomePath}\`.`;
-
   return {
     state: { ...state, initialized: true },
-    firstRunPrompt,
+    firstRunPrompt: FIRST_RUN_PROMPT,
   };
 }

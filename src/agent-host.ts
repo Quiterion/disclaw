@@ -42,13 +42,6 @@ export interface AgentHostOptions {
   modelName?: string;
   /** Initial slot content (logged for diagnostics; not actually used). */
   initialSysprompt?: string;
-  /**
-   * Working directory for the spawned pi process. Determines what cwd
-   * pi's tools default to and where pi looks for `.pi/extensions/` and
-   * `.pi/settings.json`. Default: this repo's root (so the project-local
-   * `.pi/extensions/sysprompt/` is discovered).
-   */
-  cwd?: string;
   /** Path to pi binary. Default: node_modules/.bin/pi. */
   piBin?: string;
 }
@@ -62,7 +55,6 @@ export class AgentHost extends EventEmitter {
     this.modelName = opts.modelName ?? opts.modelId;
 
     const piBin = opts.piBin ?? process.env.DISCLAW_PI_BIN ?? DEFAULT_PI_BIN;
-    const cwd = opts.cwd ?? REPO_ROOT;
 
     // Make `disclaw-ctl` discoverable in the agent's bash by prepending
     // bin/ to PATH. (E2E test caught the agent doing `find ~ -name disclaw*`
@@ -71,19 +63,32 @@ export class AgentHost extends EventEmitter {
     const binDir = resolve(REPO_ROOT, "bin");
     const newPath = `${binDir}:${process.env.PATH ?? ""}`;
 
+    // Load extensions + skills via explicit absolute paths so pi finds
+    // them regardless of the cwd it was spawned in. We deliberately do
+    // *not* set pi's cwd; it inherits from the daemon process. For dev
+    // run from a scratch dir; for prod the deploy script does
+    // `cd $HOME && exec`. Either way the agent's bash defaults to that
+    // cwd, while extension/skill loading is decoupled.
+    const syspromptExtDir = resolve(REPO_ROOT, ".pi/extensions/sysprompt");
+    const piAcmDir = resolve(REPO_ROOT, "third_party/pi-acm");
+    const piAcmSkill = resolve(REPO_ROOT, "third_party/pi-acm/skills/acm");
+
     this.pi = new PiProcess({
       command: piBin,
       args: [
         "--mode", "rpc",
         "--provider", opts.provider,
         "--model", opts.modelId,
+        "--extension", syspromptExtDir,
+        "--extension", piAcmDir,
+        "--skill", piAcmSkill,
       ],
       env: {
         ...process.env,
         PATH: newPath,
         DISCLAW_MODEL_NAME: this.modelName,
       },
-      cwd,
+      // Note: no cwd specified — pi inherits from the daemon's cwd.
     });
 
     // Forward pi's events. Daemon-side listener uses the same shape as
