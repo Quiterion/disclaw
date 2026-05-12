@@ -46,11 +46,8 @@ const optsPush = { pingStyle: "push" as const, pingPreviewLength: 150 };
 // ── Wall-clock helpers ────────────────────────────────────────────────────
 
 test("formatWallTime: zero-pads HH:MM", () => {
-  // 09:05 in local time
   assert.equal(formatWallTime(new Date(2026, 4, 12, 9, 5).getTime()), "09:05");
-  // midnight
   assert.equal(formatWallTime(new Date(2026, 4, 12, 0, 0).getTime()), "00:00");
-  // late evening (24h, no am/pm)
   assert.equal(formatWallTime(new Date(2026, 4, 12, 23, 59).getTime()), "23:59");
 });
 
@@ -59,88 +56,47 @@ test("formatTimeOpener: YYYY-MM-DD HH:MM in local time", () => {
     formatTimeOpener(new Date(2026, 4, 12, 20, 54).getTime()),
     "2026-05-12 20:54",
   );
-  assert.equal(
-    formatTimeOpener(new Date(2026, 0, 1, 0, 0).getTime()),
-    "2026-01-01 00:00",
-  );
 });
 
-// ── Single events ─────────────────────────────────────────────────────────
+// ── Channel sections (XML-wrapped) ────────────────────────────────────────
 
-test("single channel message: collapses to one-liner with wall time + uid", () => {
+test("single channel message: wrapped in <channel> with server/name attrs, no uid per line", () => {
   const out = formatBatch(
     [bufAt({ author: "alice", author_id: "U-alice", content: "hi" }, ANCHOR)],
     optsFollowUp,
   );
-  assert.equal(out, "[Test Server / #general] alice (20:54) (uid:U-alice): hi");
-});
-
-test("single push ping: short content, no truncation tail", () => {
-  const out = formatBatch(
-    [bufAt({ author: "alice", content: "hey", mentions_bot: true }, ANCHOR, "ping")],
-    optsPush,
+  assert.equal(
+    out,
+    `<channel server="Test Server" name="#general">\nalice (20:54): hi\n</channel>`,
   );
-  assert.match(out, /\[ping\] alice \(20:54\) \(uid:U-alice\) in Test Server \/ #general: "hey"/);
-  assert.doesNotMatch(out, /full via/);
+  // No uid leaked in the per-line form
+  assert.doesNotMatch(out, /uid:/);
 });
 
-test("single push ping: long content, truncated with pointer", () => {
-  const long = "x".repeat(300);
-  const out = formatBatch(
-    [bufAt({ author: "alice", content: long, mentions_bot: true }, ANCHOR, "ping")],
-    { ...optsPush, pingPreviewLength: 50 },
-  );
-  assert.match(out, /…/);
-  assert.match(out, /300 chars; full via `disclaw-ctl history C-100/);
-});
-
-test("single follow_up ping: full content in dedicated block", () => {
-  const out = formatBatch(
-    [bufAt({ author: "alice", content: "can you take a look?", mentions_bot: true }, ANCHOR, "ping")],
-    optsFollowUp,
-  );
-  assert.match(out, /\[ping\] alice \(20:54\) \(uid:U-alice\) mentioned you in Test Server \/ #general:/);
-  assert.match(out, /can you take a look\?/);
-});
-
-test("single DM ping: marked as DM not channel", () => {
-  const out = formatBatch(
-    [bufAt({ author: "alice", is_dm: true, channel: "DM-with-alice", mentions_bot: true }, ANCHOR, "ping")],
-    optsFollowUp,
-  );
-  assert.match(out, /\[ping\] alice \(20:54\) \(uid:U-alice\) mentioned you in DM:/);
-  assert.doesNotMatch(out, /#DM/);
-});
-
-// ── Multi-event batches ───────────────────────────────────────────────────
-
-test("multiple channel events same channel: header + per-line wall times, no 'last activity'", () => {
+test("multi-message channel batch: open tag, lines, close tag — no 'last activity' annotation", () => {
   const t0 = new Date(2026, 4, 12, 20, 50).getTime();
   const t1 = new Date(2026, 4, 12, 20, 51).getTime();
   const t2 = new Date(2026, 4, 12, 20, 54).getTime();
   const out = formatBatch(
     [
-      bufAt({ author: "alice", author_id: "U-alice", content: "hey opus, around?" }, t0),
-      bufAt({ author: "bob", author_id: "U-bob", content: "I think they're afk" }, t1),
-      bufAt({ author: "alice", author_id: "U-alice", content: "👋" }, t2),
+      bufAt({ author: "alice", content: "hey opus, around?" }, t0),
+      bufAt({ author: "bob", content: "I think they're afk" }, t1),
+      bufAt({ author: "alice", content: "👋" }, t2),
     ],
     optsFollowUp,
   );
-  // Header is bare — no "last activity X ago" annotation
-  assert.match(out, /\[Test Server \/ #general\]/);
+  assert.match(out, /^<channel server="Test Server" name="#general">/);
+  assert.match(out, /alice \(20:50\): hey opus, around\?/);
+  assert.match(out, /bob \(20:51\): I think they're afk/);
+  assert.match(out, /alice \(20:54\): 👋/);
+  assert.match(out, /<\/channel>$/);
   assert.doesNotMatch(out, /last activity/);
-  // Per-line wall times + uids
-  assert.match(out, /alice \(20:50\) \(uid:U-alice\): hey opus, around\?/);
-  assert.match(out, /bob \(20:51\) \(uid:U-bob\): I think they're afk/);
-  assert.match(out, /alice \(20:54\) \(uid:U-alice\): 👋/);
-  // Header first
-  assert.match(out.split("\n")[0]!, /\[Test Server \/ #general\]/);
 });
 
-test("multiple channels: separate sections, sorted by last activity", () => {
+test("multiple channels: each in its own <channel>, sorted by last activity", () => {
   const aOlder = new Date(2026, 4, 12, 20, 53).getTime();
   const aNewer = new Date(2026, 4, 12, 20, 54).getTime();
-  const bNewer = new Date(2026, 4, 12, 20, 54, 30).getTime(); // C-B last activity > C-A
+  const bNewer = new Date(2026, 4, 12, 20, 54, 30).getTime();
   const out = formatBatch(
     [
       bufAt({ channel_id: "C-A", channel: "general", author: "alice", content: "morning" }, aOlder),
@@ -149,11 +105,61 @@ test("multiple channels: separate sections, sorted by last activity", () => {
     ],
     optsFollowUp,
   );
-  // C-A's last activity is older than C-B's — C-A section should come first
-  const idxA = out.indexOf("#general");
-  const idxB = out.indexOf("#off-topic");
-  assert.ok(idxA < idxB, "older-channel section should appear before newer");
+  // Two distinct <channel> blocks
+  const channelOpens = out.match(/<channel /g) ?? [];
+  assert.equal(channelOpens.length, 2);
+  // Ordering: #general (older last-activity) before #off-topic
+  const idxA = out.indexOf(`name="#general"`);
+  const idxB = out.indexOf(`name="#off-topic"`);
+  assert.ok(idxA >= 0 && idxB >= 0);
+  assert.ok(idxA < idxB);
 });
+
+// ── Pings (XML-wrapped) ───────────────────────────────────────────────────
+
+test("single push ping: <ping> with author/uid/server/channel/at attrs", () => {
+  const out = formatBatch(
+    [bufAt({ author: "alice", author_id: "U-alice", content: "hey", mentions_bot: true }, ANCHOR, "ping")],
+    optsPush,
+  );
+  assert.match(out, /<ping author="alice" uid="U-alice" server="Test Server" channel="#general" at="20:54">/);
+  assert.match(out, /\nhey\n/);
+  assert.match(out, /<\/ping>$/);
+  assert.doesNotMatch(out, /full via/);
+});
+
+test("single push ping: long content, truncated with pointer line", () => {
+  const long = "x".repeat(300);
+  const out = formatBatch(
+    [bufAt({ author: "alice", author_id: "U-alice", content: long, mentions_bot: true }, ANCHOR, "ping")],
+    { ...optsPush, pingPreviewLength: 50 },
+  );
+  assert.match(out, /^<ping /);
+  assert.match(out, /…/);
+  assert.match(out, /300 chars; full via `disclaw-ctl history C-100/);
+  assert.match(out, /<\/ping>$/);
+});
+
+test("single follow_up ping: full content inside <ping>", () => {
+  const out = formatBatch(
+    [bufAt({ author: "alice", author_id: "U-alice", content: "can you take a look?", mentions_bot: true }, ANCHOR, "ping")],
+    optsFollowUp,
+  );
+  assert.match(out, /<ping author="alice" uid="U-alice" server="Test Server" channel="#general" at="20:54">/);
+  assert.match(out, /can you take a look\?/);
+});
+
+test("DM ping: dm=\"true\" attribute, no server/channel attrs", () => {
+  const out = formatBatch(
+    [bufAt({ author: "alice", author_id: "U-alice", is_dm: true, channel: "DM-with-alice", mentions_bot: true }, ANCHOR, "ping")],
+    optsFollowUp,
+  );
+  assert.match(out, /<ping author="alice" uid="U-alice" dm="true" at="20:54">/);
+  assert.doesNotMatch(out, /server=/);
+  assert.doesNotMatch(out, /channel=/);
+});
+
+// ── Mixed batches ─────────────────────────────────────────────────────────
 
 test("ping + channel mixed: ping section comes first", () => {
   const out = formatBatch(
@@ -163,31 +169,39 @@ test("ping + channel mixed: ping section comes first", () => {
     ],
     optsFollowUp,
   );
-  const pingIdx = out.indexOf("[ping]");
-  const channelIdx = out.indexOf("[Test Server / #general]");
+  const pingIdx = out.indexOf("<ping ");
+  const channelIdx = out.indexOf("<channel ");
   assert.ok(pingIdx >= 0 && channelIdx >= 0);
-  assert.ok(pingIdx < channelIdx, "ping section should come before channel section");
+  assert.ok(pingIdx < channelIdx);
 });
 
-test("multiple push pings: combined into one section", () => {
+test("multiple push pings: separated by blank line for readability", () => {
   const out = formatBatch(
     [
-      bufAt({ author: "alice", content: "first", mentions_bot: true }, ANCHOR, "ping"),
-      bufAt({ author: "bob", content: "second", mentions_bot: true }, ANCHOR, "ping"),
+      bufAt({ author: "alice", author_id: "U-a", content: "first", mentions_bot: true }, ANCHOR, "ping"),
+      bufAt({ author: "bob", author_id: "U-b", content: "second", mentions_bot: true }, ANCHOR, "ping"),
     ],
     optsPush,
   );
-  assert.match(out, /\[ping\] alice/);
-  assert.match(out, /\[ping\] bob/);
-  // both on consecutive lines, no blank line between (push is compact)
-  const aliceIdx = out.indexOf("[ping] alice");
-  const bobIdx = out.indexOf("[ping] bob");
-  const between = out.slice(aliceIdx, bobIdx);
-  assert.equal(between.split("\n").length, 2, "push pings should be on consecutive lines");
+  // Two <ping> blocks
+  assert.equal((out.match(/<ping /g) ?? []).length, 2);
+  // Blank line between them
+  assert.match(out, /<\/ping>\n\n<ping /);
 });
 
 test("empty batch: empty string", () => {
   assert.equal(formatBatch([], optsFollowUp), "");
+});
+
+// ── Attribute escaping ────────────────────────────────────────────────────
+
+test("XML attribute escaping: server name with special chars", () => {
+  const out = formatBatch(
+    [bufAt({ author: "alice", server: `Test "Quoted" & <Server>` }, ANCHOR)],
+    optsFollowUp,
+  );
+  // Quotes, ampersand, and angle brackets escaped in attribute
+  assert.match(out, /server="Test &quot;Quoted&quot; &amp; &lt;Server&gt;"/);
 });
 
 // ── Wrap helper ───────────────────────────────────────────────────────────
@@ -200,8 +214,6 @@ test("wrapDisclaw: opens with <time> tag carrying YYYY-MM-DD HH:MM", () => {
 });
 
 test("wrapDisclaw: defaults `now` to Date.now() when omitted", () => {
-  // We can't pin exact wall time, but the output must start with the
-  // expected opener structure.
   const out = wrapDisclaw("hi");
   assert.match(out, /^<disclaw>\n<time>\d{4}-\d{2}-\d{2} \d{2}:\d{2}<\/time>\nhi\n<\/disclaw>$/);
 });

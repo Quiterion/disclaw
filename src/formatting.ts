@@ -58,35 +58,66 @@ export function wrapDisclaw(body: string, now: number = Date.now()): string {
   return `<disclaw>\n<time>${formatTimeOpener(now)}</time>\n${body}\n</disclaw>`;
 }
 
-function channelDescriptor(ev: DiscliMessageEvent): string {
-  if (ev.is_dm) return "DM";
-  return ev.server ? `${ev.server} / #${ev.channel}` : `#${ev.channel}`;
+/**
+ * XML attribute escaping. Discord names rarely contain `"` / `<` / `>` /
+ * `&`, but cheap defense beats malformed wraps.
+ */
+function xmlAttr(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
-function authorTag(ev: DiscliMessageEvent, ms: number): string {
-  return `${ev.author} (${formatWallTime(ms)}) (uid:${ev.author_id})`;
+/**
+ * Build the location attributes for a `<ping>` (DMs vs guild channels
+ * differ — DM gets `dm="true"` and no server/channel).
+ */
+function pingLocationAttrs(ev: DiscliMessageEvent): string {
+  if (ev.is_dm) return ` dm="true"`;
+  const parts: string[] = [];
+  if (ev.server) parts.push(`server="${xmlAttr(ev.server)}"`);
+  parts.push(`channel="#${xmlAttr(ev.channel)}"`);
+  return ` ${parts.join(" ")}`;
 }
 
-function formatPingPushLine(e: BufferedEvent, previewLength: number): string {
-  const where = channelDescriptor(e.ev);
+function formatPingPush(e: BufferedEvent, previewLength: number): string {
   const trimmed =
     e.ev.content.length > previewLength
       ? e.ev.content.slice(0, previewLength) + "…"
       : e.ev.content;
   const tail =
     e.ev.content.length > previewLength
-      ? ` (${e.ev.content.length} chars; full via \`disclaw-ctl history ${e.ev.channel_id} --from ${e.ev.timestamp}\`)`
+      ? `\n(${e.ev.content.length} chars; full via \`disclaw-ctl history ${e.ev.channel_id} --from ${e.ev.timestamp}\`)`
       : "";
-  return `[ping] ${authorTag(e.ev, e.arrivedAt)} in ${where}: "${trimmed}"${tail}`;
+  return (
+    `<ping author="${xmlAttr(e.ev.author)}" uid="${e.ev.author_id}"` +
+    pingLocationAttrs(e.ev) +
+    ` at="${formatWallTime(e.arrivedAt)}">\n` +
+    `${trimmed}${tail}\n</ping>`
+  );
 }
 
-function formatPingFollowUpBlock(e: BufferedEvent): string {
-  const where = channelDescriptor(e.ev);
-  return `[ping] ${authorTag(e.ev, e.arrivedAt)} mentioned you in ${where}:\n${e.ev.content}`;
+function formatPingFollowUp(e: BufferedEvent): string {
+  return (
+    `<ping author="${xmlAttr(e.ev.author)}" uid="${e.ev.author_id}"` +
+    pingLocationAttrs(e.ev) +
+    ` at="${formatWallTime(e.arrivedAt)}">\n` +
+    `${e.ev.content}\n</ping>`
+  );
 }
 
+/** A single line within a `<channel>` block. No uid here — agent uses `whois`. */
 function formatChannelLine(e: BufferedEvent): string {
-  return `${authorTag(e.ev, e.arrivedAt)}: ${e.ev.content}`;
+  return `${e.ev.author} (${formatWallTime(e.arrivedAt)}): ${e.ev.content}`;
+}
+
+function channelOpenTag(ev: DiscliMessageEvent): string {
+  const parts: string[] = [];
+  if (ev.server) parts.push(`server="${xmlAttr(ev.server)}"`);
+  parts.push(`name="#${xmlAttr(ev.channel)}"`);
+  return `<channel ${parts.join(" ")}>`;
 }
 
 export interface FormatBatchOptions {
@@ -103,18 +134,16 @@ export function formatBatch(events: BufferedEvent[], opts: FormatBatchOptions): 
   const channelEvents = events.filter((e) => e.class === "channel");
   const sections: string[] = [];
 
-  // Pings first
+  // Pings first — each in its own <ping> tag (parser-unambiguous,
+  // metadata in attributes, content as text).
   if (pings.length > 0) {
-    if (opts.pingStyle === "push") {
-      const lines = pings.map((p) => formatPingPushLine(p, opts.pingPreviewLength));
-      sections.push(lines.join("\n"));
-    } else {
-      const blocks = pings.map((p) => formatPingFollowUpBlock(p));
-      sections.push(blocks.join("\n\n"));
-    }
+    const fmt = opts.pingStyle === "push" ? (p: BufferedEvent) => formatPingPush(p, opts.pingPreviewLength) : formatPingFollowUp;
+    sections.push(pings.map(fmt).join("\n\n"));
   }
 
-  // Channel events: group by channel_id, then sort groups by last activity (oldest first)
+  // Channel events: group by channel_id, then sort groups by last activity (oldest first).
+  // Each group becomes a <channel server name> tag. Per-line author/time
+  // inside; uid is dropped (agent uses `whois` if they want to ping).
   const byChannel = new Map<string, BufferedEvent[]>();
   for (const e of channelEvents) {
     const arr = byChannel.get(e.ev.channel_id) ?? [];
@@ -129,16 +158,9 @@ export function formatBatch(events: BufferedEvent[], opts: FormatBatchOptions): 
 
   for (const group of channelGroups) {
     const first = group[0]!;
-    const desc = channelDescriptor(first.ev);
-    if (group.length === 1) {
-      sections.push(`[${desc}] ${formatChannelLine(first)}`);
-    } else {
-      // Per-message wall-clock makes a "last activity" annotation
-      // redundant — the agent can see freshness in the lines themselves.
-      const header = `[${desc}]`;
-      const lines = group.map((e) => formatChannelLine(e));
-      sections.push([header, ...lines].join("\n"));
-    }
+    const open = channelOpenTag(first.ev);
+    const lines = group.map((e) => formatChannelLine(e));
+    sections.push([open, ...lines, "</channel>"].join("\n"));
   }
 
   return sections.join("\n\n");

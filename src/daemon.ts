@@ -254,8 +254,14 @@ async function main(): Promise<void> {
     if (state.digest_mode !== "follow_up" || digest.isEmpty()) {
       return wrapDisclaw(coreBody);
     }
+    // Wrap the digest tail in <digest>...</digest> for a parser-
+    // unambiguous boundary (otherwise a literal "[unread] ..." in a
+    // user message would be indistinguishable from the daemon-injected
+    // tail).
     const tail = formatDigest(digest.drain());
-    return wrapDisclaw(tail ? `${coreBody}\n${tail}` : coreBody);
+    if (!tail) return wrapDisclaw(coreBody);
+    const tailWrapped = `<digest>${tail}</digest>`;
+    return wrapDisclaw(coreBody ? `${coreBody}\n\n${tailWrapped}` : tailWrapped);
   }
 
   // ── Buffering layer ─────────────────────────────────────────────────
@@ -546,6 +552,16 @@ async function main(): Promise<void> {
         if (!discli) return discordUnavailable(req.req_id);
         await stopTyping(req.channel_id);
         return { req_id: req.req_id, ok: true };
+      }
+
+      case "discord-whois": {
+        if (!discli) return discordUnavailable(req.req_id);
+        const result = await discli.sendAction({
+          action: "member_search",
+          name: req.name,
+          ...(req.guild_id ? { guild_id: req.guild_id } : {}),
+        });
+        return { req_id: req.req_id, ok: true, result };
       }
 
       case "discord-history": {

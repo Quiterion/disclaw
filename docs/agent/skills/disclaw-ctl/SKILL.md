@@ -104,11 +104,18 @@ To **mention** (ping) someone, use Discord's wire-format:
 - `<@&ROLE_ID>` — role mention
 - `<#CHANNEL_ID>` — channel link (clickable, no notification)
 
-Plain `@username` is just text — Discord won't notify them. The user_id
-is surfaced as `(uid:...)` next to every author name in your incoming
-messages, so you usually have it in front of you when you need it. If
-not, `disclaw-ctl history <channel_id>` returns each message with its
-`author_id` field.
+Plain `@username` is just text — Discord won't notify them. To resolve
+a username to a user_id without scrolling through history JSON, use:
+
+```
+disclaw-ctl whois <name>                 # search across all guilds
+disclaw-ctl whois <name> --guild <id>    # restrict to one guild
+```
+
+Returns matching members (one per `(guild, user)` combination) with
+their `user_id` field. For pings you only see in `<ping uid="...">`
+attributes, the uid is already there — `whois` is for the case where
+you want to address someone by name and don't have it cached.
 
 ### Optional: signal "I'm composing" before a substantive reply
 
@@ -138,40 +145,48 @@ replying soon."
 ## How incoming messages are framed
 
 Every daemon-injected message is wrapped in `<disclaw>...</disclaw>`
-with a `<time>` opener carrying the delivery wall-clock — useful when
-re-reading older turns to know *when* something arrived (relative
-"Xs ago" framing would rot, wall-clock doesn't):
+with a `<time>` opener carrying the delivery wall-clock. Inside, each
+section is its own XML tag so the boundaries are parser-unambiguous —
+no convention-only delimiters between channels, pings, and the
+activity digest:
 
 ```
 <disclaw>
 <time>2026-05-12 20:54</time>
-[Test Server / #general] alice (20:54) (uid:518777968508665866): hi
+
+<ping author="alice" uid="518777968508665866" server="quiterion's server" channel="#off-topic" at="20:54">
+hey opus, can you take a look at this?
+</ping>
+
+<channel server="quiterion's server" name="#general">
+alice (20:50): hey, around?
+bob (20:51): I think they're afk
+alice (20:54): 👋
+</channel>
+
+<digest>[unread] #help: 3, #random: 12</digest>
 </disclaw>
 ```
 
-Inside the wrap, messages are tagged by the *reason* they reached you,
-so you can tell at a glance whether to treat one as ambient context or
-as something directed at you:
+Three section tags, three reasons-a-message-reached-you:
 
-- **`[ping] alice (20:54) (uid:...) in server / #general: "..."`** —
-  someone mentioned you (or DM'd you). Came in via the ping path;
-  ping-mode setting determines whether it's pushy (steer between
-  turns) or patient (follow-up after current run).
-- **`[server / #general] alice (20:54) (uid:...): ...`** — ambient
-  channel traffic from a channel you've subscribed to. Came in as a
-  follow-up after your most recent run finished.
-- **`[unread] #help: 3, #random: 12`** —
-  the activity digest tail. Tells you which *unsubscribed* channels
-  have had traffic since your last incoming message. Sidebar-style:
-  counts only, no content. Resets every time it gets delivered.
+- **`<ping ...>`** — someone mentioned you (or DM'd you). DMs get
+  `dm="true"` and no server/channel attributes; guild mentions carry
+  `server`, `channel`, and `at`. The author's `uid` is right there as
+  an attribute — copy into `<@uid>` to reply with a real notification.
+- **`<channel server name>`** — ambient channel traffic from a channel
+  you've subscribed to. Per-line `author (HH:MM): content`. No uid
+  per line; use `disclaw-ctl whois <name>` if you want to ping someone
+  you saw here.
+- **`<digest>[unread] #help: 3, #random: 12</digest>`** — the activity
+  digest tail. Counts of *unsubscribed* channels with new traffic
+  since you last looked. Sidebar-style: counts only, no content.
 
-Per-line wall times use 24h local format (HH:MM). The `(uid:...)` is
-the author's Discord user_id — copy this into `<@uid>` if you want to
-reply with a real ping. The `[ping]` prefix is the explicit "this is a
-notification for you," the `[server / #channel] author:` prefix is
-"you're hearing this because you chose to lurk here," and `[unread]`
-is the glance-at-the-sidebar — channels you might want to look at but
-haven't opted into streaming.
+Wall times are 24h local (HH:MM). The XML wrapping isn't decorative —
+it lets you (and any tooling that ever reads the transcript) parse the
+boundaries by tag rather than by guessing where one section ends and
+another begins. A literal `[unread] ...` someone types in a Discord
+message can't be confused with the daemon-injected digest.
 
 ## Discord — activity digest
 

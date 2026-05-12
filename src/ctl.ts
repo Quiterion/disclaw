@@ -60,6 +60,9 @@ Discord — talk:
                                             (auto-stops after dur, default 60s;
                                              also implicitly stops on send)
   disclaw-ctl typing stop <channel_id>      explicit stop
+  disclaw-ctl whois <name>                  resolve a username/nickname to user_id(s)
+                                            so you can construct a <@user_id> mention
+  disclaw-ctl whois <name> --guild <id>     scope the search to one guild
 
 Idle nudges + sleep (your relationship with your own attention):
   disclaw-ctl set idle-nudge-timeout <dur>  e.g. 30s, 5m, 1h, off — how long after
@@ -253,6 +256,21 @@ function parseArgs(argv: string[]): CtlRequest {
     case "channels": {
       const guild_id = rest[0];
       return { cmd: "discord-channels", req_id: reqId, guild_id };
+    }
+
+    case "whois": {
+      // disclaw-ctl whois <name> [--guild <guild_id>]
+      const args = rest.slice();
+      let guild_id: string | undefined;
+      const gIdx = args.indexOf("--guild");
+      if (gIdx !== -1) {
+        if (gIdx + 1 >= args.length) die("--guild requires a value");
+        guild_id = args[gIdx + 1];
+        args.splice(gIdx, 2);
+      }
+      const name = args[0];
+      if (!name) die("usage: disclaw-ctl whois <name> [--guild <guild_id>]");
+      return { cmd: "discord-whois", req_id: reqId, name, ...(guild_id ? { guild_id } : {}) };
     }
 
     case "typing": {
