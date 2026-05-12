@@ -19,6 +19,7 @@ import { EventEmitter } from "node:events";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PiProcess } from "./pi-io.js";
+import { SYSPROMPT_FILE } from "./state.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "..");
@@ -87,6 +88,13 @@ export class AgentHost extends EventEmitter {
         ...process.env,
         PATH: newPath,
         DISCLAW_MODEL_NAME: this.modelName,
+        // Pin the extension's sysprompt-file path to the same one the
+        // daemon's state writes to. Without this, the extension defaults
+        // to ~/.disclaw/sysprompt.txt regardless of DISCLAW_RUNTIME_DIR,
+        // which leaks any prior agent's sysprompt slot into isolated
+        // test runs (caught by the Opus 4.7 test instance — see
+        // ~/disclaw-tests/2026-05-12_17-53-09/feedback.md).
+        DISCLAW_SYSPROMPT_FILE: SYSPROMPT_FILE,
       },
       // Note: no cwd specified — pi inherits from the daemon's cwd.
     });
