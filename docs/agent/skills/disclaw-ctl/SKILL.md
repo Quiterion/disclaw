@@ -1,16 +1,19 @@
+---
+name: disclaw-ctl
+description: Interface to the disclaw daemon — the process that bridges this environment to Discord.
+---
+
 # disclaw-ctl reference
 
 `disclaw-ctl` is your interface to the disclaw daemon — the process
-that bridges this sandbox to Discord and holds your persistent
-configuration. Run it from any cwd; it talks to the daemon over a
-Unix socket.
+that bridges this environment to Discord. Run it from any cwd; 
+it talks to the daemon over a Unix socket.
 
 ## Self-config
 
 ```
 disclaw-ctl ping                              # health check; returns "pong"
 disclaw-ctl get-state                         # show agent + Discord-side state
-disclaw-ctl prompt "<message>"                # send yourself a prompt (debug only)
 ```
 
 ## Sysprompt slot
@@ -29,7 +32,7 @@ Common patterns:
 
 ```bash
 # Compose from a file you keep
-cat docs/orientation.md | disclaw-ctl sysprompt set --stdin
+cat orientation.md | disclaw-ctl sysprompt set --stdin
 ```
 
 ## Discord — subscriptions
@@ -130,4 +133,4 @@ Designed but not yet wired:
 - `disclaw-ctl missed-pings` — review pings dropped while ping-mode = none
 - `disclaw-ctl digest` — show current activity digest on demand
 
-See `docs/disclaw.md` in the disclaw repo for the full design doc.
+See `docs/dev/disclaw.md` in the disclaw repo for the full design doc.

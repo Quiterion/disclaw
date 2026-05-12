@@ -21,7 +21,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "..");
 
 export const SANDBOX_DIR = process.env.DISCLAW_SANDBOX_DIR ?? join(homedir(), "disclaw-sandbox");
-export const SANDBOX_DOCS_SOURCE = join(REPO_ROOT, "sandbox-docs");
+export const SANDBOX_DOCS_SOURCE = join(REPO_ROOT, "docs/agent");
 
 export interface BootstrapResult {
   /** The state to persist (includes initialized=true). */

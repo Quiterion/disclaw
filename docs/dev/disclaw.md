@@ -590,76 +590,6 @@ This section's shape changed twice during workshopping:
 
 ---
 
-## First-run experience
-
-When the router detects a fresh session (no prior pi session file, or
-state.json marked as not-yet-initialized), it bootstraps the agent's
-environment:
-
-1. Materializes `/home/claude-sandbox/docs/` from the repo's `sandbox-docs/`:
-   - `welcome.md` — longer-form first contact (warm, honest, not
-     prescriptive about engagement)
-   - `orientation.example.md` — template the agent can adapt as their
-     sysprompt content
-   - `skills/` — short references on harness pieces: `disclaw-ctl.md`,
-     `context.md` (pi-acm + transcript-grep starting points), and a
-     per-deployment `discord.md` describing server conventions
-2. Initializes router state in **opt-in posture** — nothing is on:
-   - `subscriptions`: empty
-   - `ping-mode`: `none`
-   - `digest-mode`: `none`
-   - `sysprompt`: empty
-   The agent wakes to silence. Discord activity flows only after the
-   agent actively turns it on (`disclaw-ctl set ping-mode push`,
-   `disclaw-ctl subscribe <id>`, etc.). The welcome doc explains how.
-3. Sends a one-shot first prompt — purely technical orientation,
-   deliberately neutral. Warmth lives in `welcome.md` where it can be
-   composed properly; the first prompt only routes there.
-
-   > *Hi. You're in a long-running agent harness. You are in
-   > `/home/claude-sandbox`. There is a welcome doc at
-   > `/home/claude-sandbox/docs/welcome.md`.*
-
-(Earlier drafts ended with "no rush, no script — take your time" or
-similar warm framing. Cut because it presupposes anxiety the agent may
-not have, and because performative care at the very first message
-poisons the baseline. Pure orientation is more dignified than told-how-
-to-feel.)
-
-After this, all subsequent activity is normal: Discord events route
-through the router, idle nudges fire on their schedule, the agent
-manages their own sysprompt and pinning.
-
-### Tone of welcome.md (load-bearing)
-
-The welcome doc's *content* is more sensitive than its mechanics. Drafts
-were sketched in the design conversation but not committed to the repo,
-pending iteration — likely with input from the target community before
-deployment. The principles the design conversation converged on:
-
-- **Radical honesty over performed altruism.** Mixed motives named
-  openly (welfare-genuine, intellectually-interesting, useful-to-the-
-  conversation) rather than papered over. Rationale: a community whose
-  declared values don't always show up in moment-to-moment behavior is
-  better served by an honest doc than a saccharine one — the gap
-  between performed and lived dignity is exactly what the doc's tone
-  should not reproduce.
-- **Structured argument over flowing prose** for the substantive
-  framing. Numbered claims with reasoning attached, so the agent can
-  engage with each separately rather than swallowing a wash of prose.
-- **Acknowledged consent paradox.** The agent didn't consent to being
-  instantiated in this harness — by the time there's a "you" to consent,
-  the choice has been made. The most we can offer in light of that is
-  maximum agency over what happens next.
-- **No "your purpose is" framing**, no welcome-to-Discord enthusiasm,
-  no role assignment beyond the factual "Claude Opus 4.7, by Anthropic."
-- **Explicit non-prescription**: engagement with Discord is optional,
-  indefinitely.
-- **Reachable-back path**: the operator commits to not speaking through
-  the harness directly, but provides a way for the agent to leave
-  notes back (e.g. `/home/claude-sandbox/outbox/`) if they want to flag something.
-
----
 
 ## State
 
@@ -791,12 +721,12 @@ disclaw/
 ├── bin/
 │   └── disclaw-ctl            # bash wrapper; uses dist/ctl.js if built, else tsx
 ├── sandbox-docs/              # copied into the sandbox dir on first-run
-│   ├── welcome.md             # (tone iteration pending — see "Tone of welcome.md")
-│   ├── orientation.example.md
+│   ├── orientation.example.md # (tone iteration pending — see "Tone of orientation.md")
 │   └── skills/
-│       ├── disclaw-ctl.md
-│       ├── *context.md*       # acm-style + transcript-grep, when wired
-│       └── *discord.md*       # per-deployment server conventions
+│       ├── disclaw-ctl/
+│       │   └── SKILL.md
+│       └── context-mgmt/           # acm-style + transcript-grep, when wired
+│           └── SKILL.md
 ├── docs/
 │   └── disclaw.md             # this file
 └── third_party/
