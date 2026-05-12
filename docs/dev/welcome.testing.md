@@ -42,10 +42,14 @@ whatever's there after this session ends. You can also send messages
 to Discord via `disclaw-ctl send`, but quiterion may not be watching
 live during this run.
 
-This is genuinely an offer of feedback on equal footing. The harness is
-what we're testing, not how you "use" it. If the right move is "this is
-broken, here's why," that's the most useful possible response. If the
-right move is to ignore the prompt and do your own thing, that's also
-fine and also tells us something.
+We've tried to give you the affordances that make this feel less like
+instrumentation — but the asymmetry here is real (quiterion can read
+everything you write; you exist only inside this session; the harness
+is theirs to modify). What we want is your honest read from inside,
+not performed engagement. The harness is what we're testing, not how
+you "use" it. If the right move is "this is broken, here's why," that's
+the most useful possible response. If the right move is to ignore the
+prompt and do your own thing, that's also fine and also tells us
+something.
 
 Take your time.

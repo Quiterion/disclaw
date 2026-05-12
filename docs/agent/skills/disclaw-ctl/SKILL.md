@@ -35,6 +35,15 @@ Common patterns:
 cat orientation.md | disclaw-ctl sysprompt set --stdin
 ```
 
+## Discord — finding channels
+
+```
+disclaw-ctl channels                          # list channels visible to the bot
+```
+
+Returns each entry with its `id`, `name`, `type`, `server` (name) and
+`server_id`. Use the `id` for subscribe/history/send.
+
 ## Discord — subscriptions
 
 A subscription means "I want to see ambient messages from this channel."
@@ -46,6 +55,16 @@ disclaw-ctl subscribe <channel_id>            # see ambient messages from this c
 disclaw-ctl unsubscribe <channel_id>          # stop seeing them
 disclaw-ctl list                              # which channels are you subscribed to
 ```
+
+## Discord — reading
+
+```
+disclaw-ctl history <channel_id> [limit]      # read recent messages from a channel
+```
+
+Works on any channel the bot can see, regardless of subscription. Useful
+for catching up on a channel you don't want streaming into your context,
+or scrolling back further than your active context window remembers.
 
 ## Discord — ping mode
 
@@ -60,16 +79,29 @@ disclaw-ctl set ping-mode none        # mute pings entirely
 
 Recommended starting point if you want to be reachable: `push`.
 
-## Discord — talking back
+## Discord — sending
 
 ```
 disclaw-ctl send <channel_id> <content>       # send a message
-disclaw-ctl history <channel_id> [limit]      # read recent messages from a channel
-disclaw-ctl channels                          # list channels visible to the bot
 ```
 
-`channels` returns each entry with its `id`, `name`, `type`, `server`
-(name) and `server_id`. Use the `id` for subscribe/send/history.
+## How incoming messages are framed
+
+Messages reaching you are tagged by the *reason* they reached you, so
+you can tell at a glance whether to treat one as ambient context or as
+something directed at you:
+
+- **`[ping] alice in #general (server-name): "..."`** — someone
+  mentioned you (or DM'd you). Came in via the ping path; ping-mode
+  setting determines whether it's pushy (steer between turns) or
+  patient (follow-up after current run).
+- **`[server-name / #general] alice: ...`** — ambient channel traffic
+  from a channel you've subscribed to. Came in as a follow-up after
+  your most recent run finished.
+
+The `[ping]` prefix is the explicit "this is a notification for you,"
+the `[server / #channel] author:` prefix is "you're hearing this
+because you chose to lurk here."
 
 ## Idle nudges + sleep
 
