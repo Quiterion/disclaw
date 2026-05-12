@@ -193,6 +193,92 @@ test("empty batch: empty string", () => {
   assert.equal(formatBatch([], optsFollowUp), "");
 });
 
+// ── Attachments ───────────────────────────────────────────────────────────
+
+test("channel msg with one attachment: <attachment> tag on the next line", () => {
+  const out = formatBatch(
+    [
+      bufAt(
+        {
+          author: "alice",
+          content: "check this out",
+          attachments: [{ filename: "screen.png", url: "https://cdn/abc.png", size: 12345 }],
+        },
+        ANCHOR,
+      ),
+    ],
+    optsFollowUp,
+  );
+  assert.match(out, /alice \(20:54\): check this out\n<attachment filename="screen.png" size="12345" url="https:\/\/cdn\/abc.png"\/>/);
+});
+
+test("channel msg with multiple attachments: each on its own line", () => {
+  const out = formatBatch(
+    [
+      bufAt(
+        {
+          author: "alice",
+          content: "few screens",
+          attachments: [
+            { filename: "a.png", url: "https://cdn/a.png" },
+            { filename: "b.png", url: "https://cdn/b.png", size: 999 },
+          ],
+        },
+        ANCHOR,
+      ),
+    ],
+    optsFollowUp,
+  );
+  assert.match(out, /<attachment filename="a.png" url="https:\/\/cdn\/a.png"\/>\n<attachment filename="b.png" size="999" url="https:\/\/cdn\/b.png"\/>/);
+});
+
+test("ping with attachment: tag inside the <ping> body", () => {
+  const out = formatBatch(
+    [
+      bufAt(
+        {
+          author: "alice",
+          author_id: "U-alice",
+          content: "look at this",
+          mentions_bot: true,
+          attachments: [{ filename: "bug.png", url: "https://cdn/bug.png" }],
+        },
+        ANCHOR,
+        "ping",
+      ),
+    ],
+    optsFollowUp,
+  );
+  assert.match(out, /<ping[^>]*>\nlook at this\n<attachment filename="bug.png" url="https:\/\/cdn\/bug.png"\/>\n<\/ping>/);
+});
+
+test("no attachments field: no <attachment> tags emitted", () => {
+  const out = formatBatch([bufAt({ author: "alice", content: "hi" }, ANCHOR)], optsFollowUp);
+  assert.doesNotMatch(out, /<attachment/);
+});
+
+test("empty attachments array: no <attachment> tags emitted", () => {
+  const out = formatBatch([bufAt({ author: "alice", content: "hi", attachments: [] }, ANCHOR)], optsFollowUp);
+  assert.doesNotMatch(out, /<attachment/);
+});
+
+test("attachment filename with special chars: XML-escaped", () => {
+  const out = formatBatch(
+    [
+      bufAt(
+        {
+          author: "alice",
+          content: "weird name",
+          attachments: [{ filename: `weird "quoted" & <tag>.png`, url: "https://cdn/x" }],
+        },
+        ANCHOR,
+      ),
+    ],
+    optsFollowUp,
+  );
+  assert.match(out, /filename="weird &quot;quoted&quot; &amp; &lt;tag&gt;.png"/);
+});
+
 // ── Attribute escaping ────────────────────────────────────────────────────
 
 test("XML attribute escaping: server name with special chars", () => {

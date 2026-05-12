@@ -25,6 +25,12 @@ import type { PingMode } from "./protocol.js";
  * lets us test routing with synthetic events that don't have to mirror
  * discli's full schema.
  */
+export interface AttachmentInfo {
+  filename: string;
+  url: string;
+  size?: number;
+}
+
 export interface DiscliMessageEvent {
   event: "message";
   message_id: string;
@@ -39,6 +45,8 @@ export interface DiscliMessageEvent {
   mentions_bot: boolean;
   is_dm: boolean;
   timestamp: string; // ISO 8601
+  /** Discord file attachments (images, files, etc.). Absent or empty if none. */
+  attachments?: AttachmentInfo[];
 }
 
 export interface RoutingState {

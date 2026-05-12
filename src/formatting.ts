@@ -99,16 +99,35 @@ function formatPingPush(e: BufferedEvent, previewLength: number): string {
     e.ev.content.length > previewLength
       ? `\n(${e.ev.content.length} chars; full via \`disclaw-ctl history ${e.ev.channel_id} --from ${e.ev.timestamp}\`)`
       : "";
-  return `${pingOpenTag(e)}\n${trimmed}${tail}\n</ping>`;
+  return `${pingOpenTag(e)}\n${trimmed}${tail}${formatAttachments(e.ev)}\n</ping>`;
 }
 
 function formatPingFollowUp(e: BufferedEvent): string {
-  return `${pingOpenTag(e)}\n${e.ev.content}\n</ping>`;
+  return `${pingOpenTag(e)}\n${e.ev.content}${formatAttachments(e.ev)}\n</ping>`;
+}
+
+/**
+ * Format Discord file attachments as self-closing XML tags. One per
+ * line, appended after the message they belong to. Includes filename
+ * + url (always) and size in bytes (when known). Agent can fetch the
+ * url via bash if they want the bytes.
+ */
+function formatAttachments(ev: DiscliMessageEvent): string {
+  if (!ev.attachments || ev.attachments.length === 0) return "";
+  return (
+    "\n" +
+    ev.attachments
+      .map((a) => {
+        const sizeAttr = typeof a.size === "number" ? ` size="${a.size}"` : "";
+        return `<attachment filename="${xmlAttr(a.filename)}"${sizeAttr} url="${xmlAttr(a.url)}"/>`;
+      })
+      .join("\n")
+  );
 }
 
 /** A single line within a `<channel>` block. No uid here — agent uses `whois`. */
 function formatChannelLine(e: BufferedEvent): string {
-  return `${e.ev.author} (${formatWallTime(e.arrivedAt)}): ${e.ev.content}`;
+  return `${e.ev.author} (${formatWallTime(e.arrivedAt)}): ${e.ev.content}${formatAttachments(e.ev)}`;
 }
 
 function channelOpenTag(ev: DiscliMessageEvent): string {

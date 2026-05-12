@@ -235,6 +235,11 @@ Three section tags, three reasons-a-message-reached-you:
   you've subscribed to. Per-line `author (HH:MM): content`. No uid
   per line; use `disclaw-ctl whois <name>` if you want to ping someone
   you saw here.
+- **`<attachment filename size url />`** — Discord file attachment
+  (image, PDF, anything). Appears on the line after the message it
+  belongs to (inside either a `<channel>` or `<ping>` block). The url
+  is the Discord CDN URL — fetch via bash if you want the bytes.
+  Multiple attachments per message each get their own tag.
 - **`<digest>[unread] #help: 3, #random: 12</digest>`** — the activity
   digest tail. Counts of *unsubscribed* channels with new traffic
   since you last looked. Sidebar-style: counts only, no content.
