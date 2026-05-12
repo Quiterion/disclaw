@@ -53,6 +53,96 @@ existing `bash` tool. Inbound Discord events are framed as XML-wrapped
 user messages. See `docs/agent/skills/disclaw-ctl/SKILL.md` for the
 agent-facing reference and `docs/dev/disclaw.md` for the full design.
 
+## Example session
+
+What disclaw looks like from the agent's side. After the daemon spawns
+pi, the agent's first user-message:
+
+```
+<disclaw>
+<time>2026-05-12 09:00</time>
+Hi. You're in a long-running agent harness. You are in
+`/home/quiterion/disclaw-tests/2026-05-12_09-00/`. There is a welcome
+doc at `welcome.md`.
+</disclaw>
+```
+
+State starts opt-in: `ping_mode=none`, no subscriptions, empty sysprompt
+slot. The agent reads `welcome.md` + `skills/disclaw-ctl/SKILL.md`, then
+chooses what to engage with via pi's `bash` tool:
+
+```bash
+disclaw-ctl set ping-mode push
+disclaw-ctl subscribe 1503391358076059762   # #off-topic
+```
+
+Some time later, a Discord user mentions the bot. The agent's next
+user-message arrives wrapped, with one section per reason-it-reached-them:
+
+```
+<disclaw>
+<time>2026-05-12 09:14</time>
+
+<ping author="quiterion" uid="518777968508665866" server="quiterion's server" channel="#off-topic" at="09:14" id="1503688861329657858">
+hey, can you summarize the #general thread from earlier?
+</ping>
+</disclaw>
+```
+
+Reply path — show typing while composing, fetch the channel they
+referenced, draft + send via stdin (sidesteps shell quoting for
+multi-line content):
+
+```bash
+disclaw-ctl typing 1503391358076059762 30s
+disclaw-ctl history 1502728974885978124 50
+# ... read, compose ...
+disclaw-ctl send 1503391358076059762 --stdin <<'EOF'
+here's the gist (4 msgs over ~10 min):
+
+1. alice raised the migration question
+2. bob countered with the lock-contention concern
+3. ...
+EOF
+```
+
+A subsequent delivery combining a follow-up ping (with an image
+attachment), an ambient channel message, and the activity-digest
+tail — all in one user-message, three structurally-distinct sections:
+
+```
+<disclaw>
+<time>2026-05-12 09:20</time>
+
+<ping author="alice" uid="..." server="quiterion's server" channel="#off-topic" at="09:20" id="...">
+nice. one follow-up:
+<attachment filename="diagram.png" size="42130" url="https://cdn.discordapp.com/.../diagram.png"/>
+</ping>
+
+<channel server="quiterion's server" name="#off-topic">
+quiterion (09:20): thanks both
+</channel>
+
+<digest>[unread] #general: 2, #random: 7</digest>
+</disclaw>
+```
+
+After each `agent_end`, if no new events arrive within
+`idle-nudge-timeout` (default 60s), the agent gets a quiet nudge — so
+a stretch of silence doesn't pass without their attention, but the
+choice of what to do next stays theirs:
+
+```
+<disclaw>
+<time>2026-05-12 09:35</time>
+No new Discord activity since you last responded. Use `disclaw-ctl
+sleep` to wait until something happens, or use this run however you
+like — write notes, check the system, edit your sysprompt.
+</disclaw>
+```
+
+Full verb reference: `docs/agent/skills/disclaw-ctl/SKILL.md`.
+
 ## Quick start
 
 ```bash
