@@ -26,6 +26,8 @@ import { routeDiscordEvent, type DiscliMessageEvent } from "./routing.js";
 import { BufferManager } from "./buffering.js";
 import { wrapDisclaw } from "./formatting.js";
 import { DigestAccumulator, formatDigest } from "./digest.js";
+import { clearMissedPings, readMissedPings, recordMissedPing } from "./missed-pings.js";
+import { MISSED_PINGS_FILE } from "./state.js";
 import type { CtlRequest, CtlResponse, DaemonState, DigestMode, PingMode } from "./protocol.js";
 
 const PROVIDER = process.env.DISCLAW_PROVIDER ?? "anthropic";
@@ -418,6 +420,27 @@ async function main(): Promise<void> {
         };
       }
 
+      case "missed-pings": {
+        const all = readMissedPings(MISSED_PINGS_FILE);
+        const limit = req.limit;
+        const entries = limit !== undefined && limit > 0 ? all.slice(-limit) : all;
+        return {
+          req_id: req.req_id,
+          ok: true,
+          result: { entries, total: all.length, file: MISSED_PINGS_FILE },
+        };
+      }
+
+      case "missed-pings-clear": {
+        const before = readMissedPings(MISSED_PINGS_FILE).length;
+        clearMissedPings(MISSED_PINGS_FILE);
+        return {
+          req_id: req.req_id,
+          ok: true,
+          result: { cleared: before },
+        };
+      }
+
       case "set-idle-nudge-timeout": {
         state = { ...state, idle_nudge_timeout_ms: req.timeout_ms };
         saveState(state);
@@ -505,11 +528,18 @@ async function main(): Promise<void> {
           });
           if (decision.kind === "drop") {
             // Unsubscribed-channel non-mentions feed the activity digest.
-            // Other drop reasons (self-message, ping with mode=none) are
-            // not digest material — the former is our own echo, the
-            // latter is a missed ping (logged separately in slice D).
+            // Pings dropped because ping_mode=none get appended to the
+            // missed-pings log so the agent can review on demand without
+            // having taken the interruption. (Self-messages — bot's own
+            // echo — are neither.)
             if (decision.reason === "unsubscribed channel, no mention") {
               digest.note(msgEvent);
+            } else if (decision.reason.startsWith("ping-mode is none")) {
+              try {
+                recordMissedPing(MISSED_PINGS_FILE, msgEvent);
+              } catch (err: any) {
+                log(`[missed-pings-error] ${err?.message ?? err}`);
+              }
             }
             log(
               `[discord-drop] [#${msgEvent.channel}] ${msgEvent.author}: ${decision.reason}`,

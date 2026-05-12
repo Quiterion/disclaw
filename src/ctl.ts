@@ -42,6 +42,11 @@ Discord — activity digest (sidebar-like unread counts for unsubscribed channel
   disclaw-ctl set digest-mode none          no auto-delivery; query on demand
   disclaw-ctl digest                        show current accumulated digest (peek)
 
+Discord — missed pings (review pings that were dropped while ping-mode = none):
+  disclaw-ctl missed-pings                  show all missed pings (most recent last)
+  disclaw-ctl missed-pings <N>              show only the last N entries
+  disclaw-ctl missed-pings clear            wipe the missed-pings log
+
 Discord — talk:
   disclaw-ctl send <channel_id> <content>           send a message
   disclaw-ctl send --quiet <channel_id> <content>   ditto, but print just
@@ -179,6 +184,23 @@ function parseArgs(argv: string[]): CtlRequest {
 
     case "digest":
       return { cmd: "digest", req_id: reqId };
+
+    case "missed-pings": {
+      // disclaw-ctl missed-pings           → all
+      // disclaw-ctl missed-pings <N>       → last N
+      // disclaw-ctl missed-pings clear     → wipe
+      if (rest[0] === "clear") {
+        return { cmd: "missed-pings-clear", req_id: reqId };
+      }
+      if (rest.length === 0) {
+        return { cmd: "missed-pings", req_id: reqId };
+      }
+      const limit = parseInt(rest[0]!, 10);
+      if (Number.isNaN(limit) || limit < 1) {
+        die("usage: disclaw-ctl missed-pings [<N> | clear]");
+      }
+      return { cmd: "missed-pings", req_id: reqId, limit };
+    }
 
     case "send": {
       // Support `disclaw-ctl send --quiet <ch> <content...>` to suppress

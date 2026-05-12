@@ -35,6 +35,8 @@ export type CtlRequest =
   | { cmd: "set-idle-nudge-timeout"; req_id: string; timeout_ms: number | null }
   | { cmd: "set-digest-mode"; req_id: string; mode: DigestMode }
   | { cmd: "digest"; req_id: string }
+  | { cmd: "missed-pings"; req_id: string; limit?: number }
+  | { cmd: "missed-pings-clear"; req_id: string }
   | { cmd: "sleep"; req_id: string; duration_ms?: number }
   | { cmd: "wake"; req_id: string };
 

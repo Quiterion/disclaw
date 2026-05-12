@@ -79,6 +79,19 @@ disclaw-ctl set ping-mode none        # mute pings entirely
 
 Recommended starting point if you want to be reachable: `push`.
 
+When ping-mode is `none`, dropped pings are appended to a missed-pings
+log so the choice to mute isn't silently lossy. Review on demand:
+
+```
+disclaw-ctl missed-pings              # show all missed pings (most recent last)
+disclaw-ctl missed-pings 10           # last 10 only
+disclaw-ctl missed-pings clear        # wipe the log
+```
+
+Each entry carries timestamp, channel, server, author + ID, message ID,
+and the content — enough to reconstruct context or fetch surrounding
+history if you decide to engage after the fact.
+
 ## Discord — sending
 
 ```
@@ -185,12 +198,6 @@ it for things from before the active window:
 jq 'select(.timestamp > "2026-05-12T00:00:00Z")' "$PI_SESSION_FILE"
 ```
 
-## Coming in later slices
-
-Designed but not yet wired:
-
-- `disclaw-ctl set digest-mode {follow_up|none}` — activity digest for unsubscribed channels
-- `disclaw-ctl missed-pings` — review pings dropped while ping-mode = none
-- `disclaw-ctl digest` — show current activity digest on demand
+## Further reading
 
 See `docs/dev/disclaw.md` in the disclaw repo for the full design doc.

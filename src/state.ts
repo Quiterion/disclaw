@@ -19,6 +19,7 @@ import { join, dirname } from "node:path";
 export const RUNTIME_DIR = process.env.DISCLAW_RUNTIME_DIR ?? join(homedir(), ".disclaw");
 export const STATE_FILE = join(RUNTIME_DIR, "state.json");
 export const SYSPROMPT_FILE = process.env.DISCLAW_SYSPROMPT_FILE ?? join(RUNTIME_DIR, "sysprompt.txt");
+export const MISSED_PINGS_FILE = join(RUNTIME_DIR, "missed-pings.log");
 
 import type { DigestMode, PingMode } from "./protocol.js";
 
