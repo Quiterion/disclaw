@@ -57,6 +57,8 @@ export interface AgentHostOptions {
 export class AgentHost extends EventEmitter {
   readonly pi: PiProcess;
   private readonly modelName: string;
+  /** Set when pi process exits. Null while pi is alive. */
+  private exitInfo: { code: number | null; signal: NodeJS.Signals | null } | null = null;
 
   constructor(opts: AgentHostOptions) {
     super();
@@ -122,7 +124,24 @@ export class AgentHost extends EventEmitter {
     // before (event.type, event.assistantMessageEvent, etc.).
     this.pi.on("event", (event: any) => this.emit("event", event));
     this.pi.on("error", (err: Error) => this.emit("error", err));
-    this.pi.on("exit", (info) => this.emit("exit", info));
+    this.pi.on("exit", (info) => {
+      this.exitInfo = info;
+      this.emit("exit", info);
+    });
+  }
+
+  /**
+   * True while pi is running. Goes false on pi exit (whether crash,
+   * normal shutdown, or anything else). Used for cheap operator/agent
+   * "is the agent still there?" checks via get-state.
+   */
+  get alive(): boolean {
+    return this.exitInfo === null;
+  }
+
+  /** Exit info once pi has exited; null while alive. */
+  get exit(): { code: number | null; signal: NodeJS.Signals | null } | null {
+    return this.exitInfo;
   }
 
   get isStreaming(): boolean {

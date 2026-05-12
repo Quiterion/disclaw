@@ -86,6 +86,16 @@ async function main(): Promise<void> {
     resumeSessionFile: state.last_session_file,
   });
 
+  // Tier 1 pi-exit visibility. Pi is the agent; if it exits we're a
+  // daemon with no agent to drive — surface loudly so the operator
+  // (or the agent inspecting via ctl) sees it. No auto-respawn yet.
+  host.on("exit", (info: { code: number | null; signal: string | null }) => {
+    log(
+      `[error] pi process exited unexpectedly (code=${info.code} signal=${info.signal}) ` +
+        `— agent is dead. Restart the daemon to recover.`,
+    );
+  });
+
   let assistantTextBuffer = "";
   host.on("event", (event: any) => {
     if (event.type === "message_update") {
@@ -277,6 +287,16 @@ async function main(): Promise<void> {
   // dispatches via the appropriate AgentHost method.
   const buffer = new BufferManager({
     dispatch: (kind, body) => {
+      // Tier 1 dead-pi check: avoid silently routing into a black hole
+      // (host.followUp/.steer swallow "pi has exited" via .catch).
+      // Surface clearly instead so the operator sees what's being lost.
+      if (!host.alive) {
+        log(
+          `[drop] pi is dead — dropping ${kind} delivery (${body.length} chars). ` +
+            `Restart the daemon to recover.`,
+        );
+        return;
+      }
       const wrapped = composeAndWrap(body);
       // Re-check pi state at dispatch time. The "prompt" buffer might
       // have been queued while pi was idle but pi could have started
@@ -338,6 +358,8 @@ async function main(): Promise<void> {
             isStreaming: host.isStreaming,
             isCompacting: host.isCompacting,
             isIdle: host.isIdle,
+            alive: host.alive,
+            ...(host.exit ? { exit: host.exit } : {}),
           },
           router: {
             initialized: state.initialized,

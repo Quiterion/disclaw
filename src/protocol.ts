@@ -75,6 +75,14 @@ export interface DaemonState {
     isStreaming: boolean;
     isCompacting: boolean;
     isIdle: boolean;
+    /**
+     * False if the pi process has exited. The daemon stays up after pi
+     * exits (no auto-respawn yet — that's tier 2); the agent is dead
+     * and a daemon restart is required to recover.
+     */
+    alive: boolean;
+    /** Exit info once pi has exited; absent while alive. */
+    exit?: { code: number | null; signal: string | null };
     rpc?: {
       sessionId?: string;
       sessionFile?: string;
