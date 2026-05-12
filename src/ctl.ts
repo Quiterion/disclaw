@@ -414,8 +414,13 @@ async function main(): Promise<void> {
   delete (req as any)._quiet;
 
   if (quiet && req.cmd === "discord-send" && resp.ok) {
-    const jumpUrl = (resp as any)?.result?.result?.jump_url;
-    const messageId = (resp as any)?.result?.result?.message_id;
+    // Response shape: { req_id, ok, result: { ok, jump_url, message_id, ... } }
+    // i.e. `result` wraps once (the daemon) and inside is discli's response
+    // object directly. Earlier code did `result.result.jump_url` (one level
+    // too deep) so both lookups returned undefined → silent exit-0 with no
+    // output, leaving the caller unable to confirm the send actually fired.
+    const jumpUrl = (resp as any)?.result?.jump_url;
+    const messageId = (resp as any)?.result?.message_id;
     if (jumpUrl) {
       process.stdout.write(jumpUrl + "\n");
     } else if (messageId) {

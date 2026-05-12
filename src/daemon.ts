@@ -407,8 +407,35 @@ async function main(): Promise<void> {
         return { req_id: req.req_id, ok: true };
 
       case "subscribe":
-        if (!state.subscriptions.includes(req.channel_id)) {
-          state = { ...state, subscriptions: [...state.subscriptions, req.channel_id] };
+      case "unsubscribe": {
+        // Reject `#name` form with a clear error rather than silently
+        // storing a literal that won't match incoming routing
+        // decisions (which compare against numeric channel_id from
+        // discli). Doc-only guidance + the silent-failure mode was
+        // the worst combination — agent would "subscribe" then never
+        // see ambient channel traffic and only notice via the digest
+        // counting it as unsubscribed activity.
+        const id = req.channel_id;
+        if (!/^\d+$/.test(id)) {
+          return {
+            req_id: req.req_id,
+            ok: false,
+            error:
+              `${req.cmd} requires a numeric channel_id, got: ${JSON.stringify(id)}. ` +
+              `Use \`disclaw-ctl channels\` to find the id; #name is not accepted ` +
+              `here (cross-guild collisions would silently subscribe the wrong channel).`,
+          };
+        }
+        if (req.cmd === "subscribe") {
+          if (!state.subscriptions.includes(id)) {
+            state = { ...state, subscriptions: [...state.subscriptions, id] };
+            saveState(state);
+          }
+        } else {
+          state = {
+            ...state,
+            subscriptions: state.subscriptions.filter((c) => c !== id),
+          };
           saveState(state);
         }
         return {
@@ -416,18 +443,7 @@ async function main(): Promise<void> {
           ok: true,
           result: { subscriptions: state.subscriptions },
         };
-
-      case "unsubscribe":
-        state = {
-          ...state,
-          subscriptions: state.subscriptions.filter((c) => c !== req.channel_id),
-        };
-        saveState(state);
-        return {
-          req_id: req.req_id,
-          ok: true,
-          result: { subscriptions: state.subscriptions },
-        };
+      }
 
       case "list-subscriptions":
         return {
