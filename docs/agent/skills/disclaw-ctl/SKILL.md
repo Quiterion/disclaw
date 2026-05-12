@@ -103,7 +103,25 @@ history if you decide to engage after the fact.
 
 ```
 disclaw-ctl send <channel_id> <content>       # send a message
+disclaw-ctl send <channel_id> --stdin         # read content from stdin
 ```
+
+The `--stdin` form is the right choice for any message you'd otherwise
+have to escape or quote your way around — multi-line replies, content
+containing backticks, `$vars`, embedded `"quotes"`, code blocks, etc.
+Heredoc or pipe both work:
+
+```bash
+disclaw-ctl send #general --stdin <<'EOF'
+multi-line content with `backticks` and "quotes" travels
+through clean — no escaping required.
+EOF
+
+cat /tmp/draft.md | disclaw-ctl send #general --stdin
+```
+
+Add `--quiet` to print just the jump URL on success (skips the JSON
+wrapper) — lighter for back-and-forth conversational use.
 
 To **mention** (ping) someone, use Discord's wire-format:
 

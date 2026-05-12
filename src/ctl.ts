@@ -54,6 +54,10 @@ Discord — talk:
   disclaw-ctl send --quiet <channel_id> <content>   ditto, but print just
                                                     the jump URL on success
                                                     (lighter for conversational use)
+  disclaw-ctl send <channel_id> --stdin             read content from stdin
+                                                    (heredoc / pipe — sidesteps
+                                                     shell-quoting issues for
+                                                     multi-line, backticks, $vars)
   disclaw-ctl history <channel_id> [limit]  read recent messages from a channel
   disclaw-ctl channels                      list channels visible to the bot
   disclaw-ctl typing <channel_id> [dur]     show "is typing…" in a channel
@@ -231,16 +235,26 @@ function parseArgs(argv: string[]): CtlRequest {
     }
 
     case "send": {
-      // Support `disclaw-ctl send --quiet <ch> <content...>` to suppress
-      // the JSON wrapper and print just the jump URL on success.
-      // Position: --quiet may appear before the channel_id.
+      // Flags (any position, before or after the channel_id):
+      //   --quiet  → on success, print just the jump URL (no JSON)
+      //   --stdin  → read content from stdin instead of trailing args
+      //              (avoids shell quoting hell for multi-line, $vars,
+      //               backticks, embedded quotes)
       const args = rest.slice();
       const quietIdx = args.indexOf("--quiet");
       if (quietIdx !== -1) args.splice(quietIdx, 1);
+      const stdinIdx = args.indexOf("--stdin");
+      const useStdin = stdinIdx !== -1;
+      if (useStdin) args.splice(stdinIdx, 1);
+
       const channel_id = args[0];
-      const content = args.slice(1).join(" ");
+      const content = useStdin ? readStdinSync() : args.slice(1).join(" ");
+
       if (!channel_id || !content) {
-        die("usage: disclaw-ctl send [--quiet] <channel_id> <content...>");
+        die(
+          "usage: disclaw-ctl send [--quiet] <channel_id> <content...>\n" +
+            "       disclaw-ctl send [--quiet] <channel_id> --stdin    (heredoc / pipe)",
+        );
       }
       return {
         _quiet: quietIdx !== -1,
