@@ -63,6 +63,11 @@ Discord — talk:
   disclaw-ctl whois <name>                  resolve a username/nickname to user_id(s)
                                             so you can construct a <@user_id> mention
   disclaw-ctl whois <name> --guild <id>     scope the search to one guild
+  disclaw-ctl react   <channel_id> <message_id> <emoji>
+                                            add an emoji reaction (lighter than a reply;
+                                             emoji = unicode 👍 or :name: for custom)
+  disclaw-ctl unreact <channel_id> <message_id> <emoji>
+                                            retract a reaction
 
 Idle nudges + sleep (your relationship with your own attention):
   disclaw-ctl set idle-nudge-timeout <dur>  e.g. 30s, 5m, 1h, off — how long after
@@ -259,6 +264,26 @@ function parseArgs(argv: string[]): CtlRequest {
     case "channels": {
       const guild_id = rest[0];
       return { cmd: "discord-channels", req_id: reqId, guild_id };
+    }
+
+    case "react":
+    case "unreact": {
+      // disclaw-ctl react   <channel_id> <message_id> <emoji>
+      // disclaw-ctl unreact <channel_id> <message_id> <emoji>
+      // emoji: unicode (👍) or custom-guild-emoji shortcode (:thumbsup:)
+      const channel_id = rest[0];
+      const message_id = rest[1];
+      const emoji = rest[2];
+      if (!channel_id || !message_id || !emoji) {
+        die(`usage: disclaw-ctl ${cmd} <channel_id> <message_id> <emoji>`);
+      }
+      return {
+        cmd: cmd === "react" ? "discord-react" : "discord-unreact",
+        req_id: reqId,
+        channel_id,
+        message_id,
+        emoji,
+      };
     }
 
     case "whois": {

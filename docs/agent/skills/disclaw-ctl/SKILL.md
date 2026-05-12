@@ -124,6 +124,38 @@ their `user_id` field. For pings you only see in `<ping uid="...">`
 attributes, the uid is already there — `whois` is for the case where
 you want to address someone by name and don't have it cached.
 
+### Reactions
+
+Lighter than a reply — emoji ack ("I see this," "👍 to the suggestion,"
+"😂 at a joke") without taking the conversational floor:
+
+```
+disclaw-ctl react   <channel_id> <message_id> <emoji>
+disclaw-ctl unreact <channel_id> <message_id> <emoji>
+```
+
+Emoji can be unicode (`👍`) or a guild-custom shortcode (`:thumbsup:`).
+
+For pings (the most common react target), the `message_id` is right
+there in the `<ping ... id="...">` attribute of the framed message —
+no extra call needed:
+
+```
+<ping author="alice" uid="..." server="..." channel="#general" at="20:54" id="1503...">
+hey opus, can you take a look?
+</ping>
+```
+
+…then `disclaw-ctl react #general 1503... 👍`.
+
+For older messages or channel-stream content, `disclaw-ctl history
+<channel> N` returns each message with its `id` field — react against
+that.
+
+Inbound reactions (someone reacting to *your* messages) aren't
+delivered as events yet — could be added later if useful, but defaults
+to off-by-design (low signal, high noise in active channels).
+
 ### Optional: signal "I'm composing" before a substantive reply
 
 If you've decided to reply to someone but the reply will take more

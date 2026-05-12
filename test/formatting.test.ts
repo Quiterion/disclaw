@@ -122,7 +122,7 @@ test("single push ping: <ping> with author/uid/server/channel/at attrs", () => {
     [bufAt({ author: "alice", author_id: "U-alice", content: "hey", mentions_bot: true }, ANCHOR, "ping")],
     optsPush,
   );
-  assert.match(out, /<ping author="alice" uid="U-alice" server="Test Server" channel="#general" at="20:54">/);
+  assert.match(out, /<ping author="alice" uid="U-alice" server="Test Server" channel="#general" at="20:54" id="msg-1">/);
   assert.match(out, /\nhey\n/);
   assert.match(out, /<\/ping>$/);
   assert.doesNotMatch(out, /full via/);
@@ -145,7 +145,7 @@ test("single follow_up ping: full content inside <ping>", () => {
     [bufAt({ author: "alice", author_id: "U-alice", content: "can you take a look?", mentions_bot: true }, ANCHOR, "ping")],
     optsFollowUp,
   );
-  assert.match(out, /<ping author="alice" uid="U-alice" server="Test Server" channel="#general" at="20:54">/);
+  assert.match(out, /<ping author="alice" uid="U-alice" server="Test Server" channel="#general" at="20:54" id="msg-1">/);
   assert.match(out, /can you take a look\?/);
 });
 
@@ -154,7 +154,7 @@ test("DM ping: dm=\"true\" attribute, no server/channel attrs", () => {
     [bufAt({ author: "alice", author_id: "U-alice", is_dm: true, channel: "DM-with-alice", mentions_bot: true }, ANCHOR, "ping")],
     optsFollowUp,
   );
-  assert.match(out, /<ping author="alice" uid="U-alice" dm="true" at="20:54">/);
+  assert.match(out, /<ping author="alice" uid="U-alice" dm="true" at="20:54" id="msg-1">/);
   assert.doesNotMatch(out, /server=/);
   assert.doesNotMatch(out, /channel=/);
 });

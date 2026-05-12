@@ -586,6 +586,28 @@ async function main(): Promise<void> {
         return { req_id: req.req_id, ok: true, result };
       }
 
+      case "discord-react": {
+        if (!discli) return discordUnavailable(req.req_id);
+        const result = await discli.sendAction({
+          action: "reaction_add",
+          channel_id: req.channel_id,
+          message_id: req.message_id,
+          emoji: req.emoji,
+        });
+        return { req_id: req.req_id, ok: true, result };
+      }
+
+      case "discord-unreact": {
+        if (!discli) return discordUnavailable(req.req_id);
+        const result = await discli.sendAction({
+          action: "reaction_remove",
+          channel_id: req.channel_id,
+          message_id: req.message_id,
+          emoji: req.emoji,
+        });
+        return { req_id: req.req_id, ok: true, result };
+      }
+
       case "discord-history": {
         if (!discli) return discordUnavailable(req.req_id);
         const result = await discli.sendAction({

@@ -82,6 +82,14 @@ function pingLocationAttrs(ev: DiscliMessageEvent): string {
   return ` ${parts.join(" ")}`;
 }
 
+function pingOpenTag(e: BufferedEvent): string {
+  return (
+    `<ping author="${xmlAttr(e.ev.author)}" uid="${e.ev.author_id}"` +
+    pingLocationAttrs(e.ev) +
+    ` at="${formatWallTime(e.arrivedAt)}" id="${e.ev.message_id}">`
+  );
+}
+
 function formatPingPush(e: BufferedEvent, previewLength: number): string {
   const trimmed =
     e.ev.content.length > previewLength
@@ -91,21 +99,11 @@ function formatPingPush(e: BufferedEvent, previewLength: number): string {
     e.ev.content.length > previewLength
       ? `\n(${e.ev.content.length} chars; full via \`disclaw-ctl history ${e.ev.channel_id} --from ${e.ev.timestamp}\`)`
       : "";
-  return (
-    `<ping author="${xmlAttr(e.ev.author)}" uid="${e.ev.author_id}"` +
-    pingLocationAttrs(e.ev) +
-    ` at="${formatWallTime(e.arrivedAt)}">\n` +
-    `${trimmed}${tail}\n</ping>`
-  );
+  return `${pingOpenTag(e)}\n${trimmed}${tail}\n</ping>`;
 }
 
 function formatPingFollowUp(e: BufferedEvent): string {
-  return (
-    `<ping author="${xmlAttr(e.ev.author)}" uid="${e.ev.author_id}"` +
-    pingLocationAttrs(e.ev) +
-    ` at="${formatWallTime(e.arrivedAt)}">\n` +
-    `${e.ev.content}\n</ping>`
-  );
+  return `${pingOpenTag(e)}\n${e.ev.content}\n</ping>`;
 }
 
 /** A single line within a `<channel>` block. No uid here — agent uses `whois`. */
