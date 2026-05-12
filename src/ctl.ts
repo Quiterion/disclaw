@@ -74,6 +74,9 @@ Idle nudges + sleep (your relationship with your own attention):
   disclaw-ctl wake                          cancel an active sleep manually
 
 Use \`channels\` to find channel IDs. They're long numbers like 1503391358076059762.
+
+For any <channel_id> argument you can also use #name (e.g. #general). Numeric is
+unambiguous; name form scans all guilds and takes the first match.
 `;
 
 function readStdinSync(): string {

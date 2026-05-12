@@ -35,6 +35,13 @@ Common patterns:
 cat orientation.md | disclaw-ctl sysprompt set --stdin
 ```
 
+> Wherever a `<channel_id>` argument appears below, you can also pass
+> `#name` (e.g. `disclaw-ctl send #general "..."`). Numeric IDs are
+> always unambiguous; name form is scanned across all guilds the bot
+> is in and the first match wins, which is fine when the bot is in
+> one server but a footgun if multiple servers share a channel name —
+> use the numeric ID when in doubt.
+
 ## Discord — finding channels
 
 ```
