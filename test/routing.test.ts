@@ -60,48 +60,30 @@ test("non-mention in subscribed channel: follow_up channel delivery", () => {
   if (decision.kind !== "deliver") return;
   assert.equal(decision.class, "channel");
   assert.equal(decision.mode, "follow_up");
-  assert.match(decision.userMessage, /\[Test Server \/ #general\] alice: hello/);
 });
 
 // ── Pings ───────────────────────────────────────────────────────────────
 
-test("mention with ping-mode=push: push, truncated when long", () => {
-  const longContent = "x".repeat(300);
+test("mention with ping-mode=push: classifies as push", () => {
   const decision = routeDiscordEvent(
-    makeEvent({ mentions_bot: true, content: longContent }),
+    makeEvent({ mentions_bot: true }),
     makeState({ ping_mode: "push" }),
   );
   assert.equal(decision.kind, "deliver");
   if (decision.kind !== "deliver") return;
   assert.equal(decision.class, "ping");
   assert.equal(decision.mode, "push");
-  assert.match(decision.userMessage, /\[ping\]/);
-  assert.match(decision.userMessage, /…/);
-  assert.match(decision.userMessage, /full via `disclaw-ctl history/);
 });
 
-test("mention with ping-mode=push: short content, no truncation tail", () => {
+test("mention with ping-mode=follow_up: classifies as follow_up", () => {
   const decision = routeDiscordEvent(
-    makeEvent({ mentions_bot: true, content: "hey opus" }),
-    makeState({ ping_mode: "push" }),
-  );
-  assert.equal(decision.kind, "deliver");
-  if (decision.kind !== "deliver") return;
-  assert.doesNotMatch(decision.userMessage, /full via/);
-  assert.doesNotMatch(decision.userMessage, /…/);
-});
-
-test("mention with ping-mode=follow_up: follow_up, full content", () => {
-  const decision = routeDiscordEvent(
-    makeEvent({ mentions_bot: true, content: "hi can you take a look at this?" }),
+    makeEvent({ mentions_bot: true }),
     makeState({ ping_mode: "follow_up" }),
   );
   assert.equal(decision.kind, "deliver");
   if (decision.kind !== "deliver") return;
   assert.equal(decision.class, "ping");
   assert.equal(decision.mode, "follow_up");
-  assert.match(decision.userMessage, /\[ping\]/);
-  assert.match(decision.userMessage, /hi can you take a look at this/);
 });
 
 test("DM: routes through ping path regardless of subscriptions", () => {
@@ -112,7 +94,6 @@ test("DM: routes through ping path regardless of subscriptions", () => {
   assert.equal(decision.kind, "deliver");
   if (decision.kind !== "deliver") return;
   assert.equal(decision.class, "ping");
-  assert.match(decision.userMessage, /DM/);
 });
 
 // ── Pings on subscribed channels: still ping path ───────────────────────

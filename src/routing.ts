@@ -2,15 +2,18 @@
  * Discord-event routing — pure logic, easy to test without an LLM.
  *
  * Takes a discli `message` event + the daemon's state, returns a
- * routing decision: drop, or deliver-via-mode with a formatted user
- * message string. The daemon translates "deliver-via-mode" into the
- * appropriate AgentHost call (prompt/followUp/steer) based on whether
- * the agent is currently idle.
+ * routing *classification*: drop (with reason), or deliver-as-class-X-
+ * via-mode-Y. The daemon enqueues delivers into per-mode buffers
+ * (src/buffering.ts) which flush to the agent on their own triggers
+ * (agent_end for follow_up, debounce for push/prompt). Formatting of
+ * the user-message body lives in src/formatting.ts and runs at flush
+ * time so relative timestamps are accurate.
  *
- * Slice 3 routing matrix:
+ * Routing matrix:
  *   - mention/DM (any channel)         → ping path (mode = ping_mode)
  *   - message in subscribed channel    → channel stream (mode = follow_up)
  *   - message in unsubscribed channel  → drop
+ *   - message authored by the bot      → drop (filtered by bot_id)
  *
  * Activity digest, sleep state, and per-event-class push debounce are
  * deferred to later slices.
@@ -51,50 +54,24 @@ export type RoutingDecision =
       kind: "deliver";
       class: "ping" | "channel";
       mode: "push" | "follow_up";
-      userMessage: string;
     };
-
-/** Format a single Discord message as a user-message string for the agent. */
-export function formatChannelMessage(ev: DiscliMessageEvent): string {
-  const where = ev.server ? `${ev.server} / #${ev.channel}` : `#${ev.channel}`;
-  return `[${where}] ${ev.author}: ${ev.content}`;
-}
-
-export function formatPingFollowUp(ev: DiscliMessageEvent): string {
-  const where = ev.is_dm ? "DM" : `#${ev.channel}` + (ev.server ? ` (${ev.server})` : "");
-  return `[ping] ${ev.author} mentioned you in ${where}:\n${ev.content}`;
-}
-
-export function formatPingPush(ev: DiscliMessageEvent, previewLength = 150): string {
-  const where = ev.is_dm ? "DM" : `#${ev.channel}` + (ev.server ? ` (${ev.server})` : "");
-  const trimmed = ev.content.length > previewLength
-    ? ev.content.slice(0, previewLength) + "…"
-    : ev.content;
-  const tail = ev.content.length > previewLength
-    ? ` (${ev.content.length} chars; full via \`disclaw-ctl history ${ev.channel_id} --from ${ev.timestamp}\`)`
-    : "";
-  return `[ping] ${ev.author} in ${where}: "${trimmed}"${tail}`;
-}
 
 /**
  * Decide what to do with an incoming Discord message.
  *
  * Notes:
- *   - Bot-authored messages are NOT filtered. In Anima-shaped servers,
- *     other LLM agents are bot accounts; filtering by is_bot would hide
- *     most of what's interesting to lurk on.
- *   - The agent sending its own messages is a separate concern: discli
- *     can be configured with --no-include-self at the spawn-args level
- *     if we want to suppress those, but for slice 3 we leave it on.
+ *   - Other-bot-authored messages are NOT filtered. In Anima-shaped
+ *     servers, other LLM agents are bot accounts; filtering by is_bot
+ *     would hide most of what's interesting to lurk on.
+ *   - The agent's own messages ARE filtered (see bot_id check) — discli
+ *     echoes them back when the bot sends to a subscribed channel, and
+ *     letting them through caused misattribution in slice-3 e2e (the
+ *     agent treated their own echo as user-mediated confirmation).
  */
 export function routeDiscordEvent(
   ev: DiscliMessageEvent,
   state: RoutingState,
 ): RoutingDecision {
-  // Drop the bot's own messages — discli echoes them back as events when
-  // the bot sends to a subscribed channel; passing them through as user
-  // messages confuses attribution (the agent reads them as if a "user"
-  // is showing them their own send) and risks self-feedback loops.
   if (state.bot_id && ev.author_id === state.bot_id) {
     return { kind: "drop", reason: "self-message (bot's own send echoed)" };
   }
@@ -105,31 +82,16 @@ export function routeDiscordEvent(
     if (state.ping_mode === "none") {
       return { kind: "drop", reason: "ping-mode is none (logged elsewhere)" };
     }
-    if (state.ping_mode === "push") {
-      return {
-        kind: "deliver",
-        class: "ping",
-        mode: "push",
-        userMessage: formatPingPush(ev),
-      };
-    }
-    // follow_up
     return {
       kind: "deliver",
       class: "ping",
-      mode: "follow_up",
-      userMessage: formatPingFollowUp(ev),
+      mode: state.ping_mode === "push" ? "push" : "follow_up",
     };
   }
 
   // Non-ping: deliver only if subscribed
   if (state.subscriptions.has(ev.channel_id)) {
-    return {
-      kind: "deliver",
-      class: "channel",
-      mode: "follow_up",
-      userMessage: formatChannelMessage(ev),
-    };
+    return { kind: "deliver", class: "channel", mode: "follow_up" };
   }
 
   return { kind: "drop", reason: "unsubscribed channel, no mention" };

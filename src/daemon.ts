@@ -23,6 +23,8 @@ import { loadState, saveState, type RouterState } from "./state.js";
 import { maybeBootstrap } from "./bootstrap.js";
 import { DiscliProcess } from "./discli-io.js";
 import { routeDiscordEvent, type DiscliMessageEvent } from "./routing.js";
+import { BufferManager } from "./buffering.js";
+import { wrapDisclaw } from "./formatting.js";
 import type { CtlRequest, CtlResponse, DaemonState, PingMode } from "./protocol.js";
 
 const PROVIDER = process.env.DISCLAW_PROVIDER ?? "anthropic";
@@ -105,6 +107,10 @@ async function main(): Promise<void> {
     // schedule a fresh nudge after a run ends.
     if (event.type === "agent_start") cancelNudgeTimer();
     if (event.type === "agent_end") {
+      // Flush any follow_up events that accumulated during the run.
+      // (Push events flush on their own debounce; prompt events only
+      // exist when pi was idle, so they're not relevant here.)
+      buffer.flush("follow_up");
       scheduleNudgeTimer();
       lastEventTime = Date.now();
       // Refresh tracked sessionFile in case pi rotated sessions.
@@ -179,7 +185,7 @@ async function main(): Promise<void> {
       : "No new Discord activity since you last responded. " +
         "Use `disclaw-ctl sleep` to wait until something happens, or use this run however you " +
         "like — write notes, check the system, edit your sysprompt.";
-    host.prompt(text).catch((err) => log(`[nudge-error] ${err.message}`));
+    host.prompt(wrapDisclaw(text)).catch((err) => log(`[nudge-error] ${err.message}`));
   }
 
   function requestSleep(durationMs?: number): void {
@@ -209,18 +215,37 @@ async function main(): Promise<void> {
     sleep = null;
   }
 
-  // ── Routing helper ──────────────────────────────────────────────────
-  // Translates a routing decision into the right AgentHost call,
-  // depending on whether the agent is currently idle.
-  function deliverToAgent(mode: "push" | "follow_up", userMessage: string): void {
-    if (host.isIdle) {
-      // All modes collapse to prompt when idle (per design doc).
-      host.prompt(userMessage).catch((err) => log(`[deliver-error] ${err.message}`));
-      return;
-    }
-    if (mode === "push") host.steer(userMessage);
-    else host.followUp(userMessage);
-  }
+  // ── Buffering layer ─────────────────────────────────────────────────
+  // Per-mode event buffers + flush triggers. Routing classifies an
+  // arriving Discord event; the daemon enqueues into the appropriate
+  // buffer depending on pi's current state (idle → prompt; streaming →
+  // the routed mode). Flushes:
+  //   - follow_up: triggered explicitly on agent_end below
+  //   - push, prompt: short debounce window (default 500ms from first
+  //     event in the buffer), then flush automatically
+  // At flush time the buffer drains into a formatted user-message body
+  // (formatting.ts), gets wrapped in `<disclaw>...</disclaw>`, and
+  // dispatches via the appropriate AgentHost method.
+  const buffer = new BufferManager({
+    dispatch: (kind, wrappedMessage) => {
+      // Re-check pi state at dispatch time. The "prompt" buffer might
+      // have been queued while pi was idle but pi could have started
+      // streaming during the debounce — in that case route as follow_up.
+      if (kind === "prompt" && !host.isIdle) {
+        host.followUp(wrappedMessage);
+        return;
+      }
+      // Symmetric: if a "push"/"follow_up" buffer flushes and pi is
+      // somehow idle (unusual but possible), deliver as prompt.
+      if (kind !== "prompt" && host.isIdle) {
+        host.prompt(wrappedMessage).catch((err) => log(`[deliver-error] ${err.message}`));
+        return;
+      }
+      if (kind === "push") host.steer(wrappedMessage);
+      else if (kind === "follow_up") host.followUp(wrappedMessage);
+      else host.prompt(wrappedMessage).catch((err) => log(`[deliver-error] ${err.message}`));
+    },
+  });
 
   // ── Control plane ───────────────────────────────────────────────────
   const handler = async (req: CtlRequest): Promise<CtlResponse> => {
@@ -426,7 +451,17 @@ async function main(): Promise<void> {
           cancelNudgeTimer();
           if (sleep) cancelSleep();
           lastEventTime = Date.now();
-          deliverToAgent(decision.mode, decision.userMessage);
+          // Enqueue into the appropriate buffer. If pi is idle, the
+          // event goes to the prompt buffer (debounce → flush as
+          // prompt). Otherwise it goes to the routed mode (push or
+          // follow_up). Buffering coalesces bursts; formatting (and
+          // the <disclaw> wrap) happens at flush time.
+          const bufferKind = host.isIdle ? "prompt" : decision.mode;
+          buffer.add(bufferKind, {
+            ev: msgEvent,
+            class: decision.class,
+            arrivedAt: Date.now(),
+          });
         } else if (event.event === "ready") {
           log(`[discord] ready as ${event.bot_name} (${event.bot_id})`);
         } else if (event.event === "error") {
@@ -455,7 +490,7 @@ async function main(): Promise<void> {
 
   if (bootstrap.firstRunPrompt !== null) {
     log(`[bootstrap] sending first-run prompt`);
-    host.prompt(bootstrap.firstRunPrompt).catch((err) => {
+    host.prompt(wrapDisclaw(bootstrap.firstRunPrompt)).catch((err) => {
       log(`[bootstrap] first-run prompt failed: ${err.message}`);
     });
   }
