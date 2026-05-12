@@ -68,6 +68,10 @@ async function main(): Promise<void> {
   const bootstrap = maybeBootstrap(state);
   state = bootstrap.state;
   if (!wasInitialized) log(`first-run bootstrap: cwd=${process.cwd()}`);
+  // Persist deploy-config (provider/model/model_name) so a cold restart
+  // with no running daemon to inherit env from can recover identity
+  // from disk via start.sh's state.json fallback.
+  state = { ...state, provider: PROVIDER, model: MODEL, model_name: MODEL_NAME };
   saveState(state);
 
   // ── Build the agent ────────────────────────────────────────────────

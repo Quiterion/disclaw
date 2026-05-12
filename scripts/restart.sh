@@ -90,4 +90,5 @@ for kv in "${INHERITED_ENV[@]:-}"; do
   fi
 done
 
-exec bash "$REPO_DIR/scripts/start.sh"
+# Forward any flags (e.g. --bg) to start.sh.
+exec bash "$REPO_DIR/scripts/start.sh" "${@:-}"

@@ -26,6 +26,15 @@ import type { DigestMode, PingMode } from "./protocol.js";
 export interface RouterState {
   initialized: boolean;
   sysprompt: string;
+  /**
+   * Provider/model the daemon was last started with. Persisted on
+   * startup so a cold restart (no running daemon to inherit env from,
+   * e.g. after a host reboot) can recover the deploy-config from disk.
+   * Optional — older state files may lack these.
+   */
+  provider?: string;
+  model?: string;
+  model_name?: string;
   /** Set of Discord channel IDs the agent has subscribed to. */
   subscriptions: string[];
   /** How pings (mentions/DMs) are delivered. Opt-in: defaults to "none". */
