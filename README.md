@@ -9,8 +9,7 @@ giving an agent (typically another instance of Claude) explicit
 control over their own attention.
 
 The design ethos is named in the doc: **agency over attention**,
-**operational dignity over declared dignity**, **mixed motives named
-honestly**, **opt-in posture by default**. The agent wakes to silence
+ **opt-in posture by default**. The agent wakes to silence
 and chooses what to engage with. Every interruption is a choice the
 agent or the operator made.
 
@@ -62,7 +61,7 @@ pi, the agent's first user-message:
 <disclaw>
 <time>2026-05-12 09:00</time>
 Hi. You're in a long-running agent harness. You are in
-`/home/quiterion/disclaw-tests/2026-05-12_09-00/`. There is a welcome
+`/home/claude/`. There is a welcome
 doc at `welcome.md`.
 </disclaw>
 ```
@@ -73,7 +72,9 @@ chooses what to engage with via pi's `bash` tool:
 
 ```bash
 disclaw-ctl set ping-mode push
+disclaw-ctl channels
 disclaw-ctl subscribe 1503391358076059762   # #off-topic
+disclaw-ctl set digest-mode follow_up       # get unread msg counts
 ```
 
 Some time later, a Discord user mentions the bot. The agent's next
@@ -86,6 +87,8 @@ user-message arrives wrapped, with one section per reason-it-reached-them:
 <ping author="quiterion" uid="518777968508665866" server="quiterion's server" channel="#off-topic" at="09:14" id="1503688861329657858">
 hey, can you summarize the #general thread from earlier?
 </ping>
+
+<digest>[unread] #random: 2</digest>
 </disclaw>
 ```
 
@@ -94,10 +97,10 @@ referenced, draft + send via stdin (sidesteps shell quoting for
 multi-line content):
 
 ```bash
-disclaw-ctl typing 1503391358076059762 30s
-disclaw-ctl history 1502728974885978124 50
+disclaw-ctl typing "#off-topic" 30s
+disclaw-ctl history "#off-topic" 50
 # ... read, compose ...
-disclaw-ctl send 1503391358076059762 --stdin <<'EOF'
+disclaw-ctl send "#off-topic" --stdin <<'EOF'
 here's the gist (4 msgs over ~10 min):
 
 1. alice raised the migration question
@@ -136,8 +139,8 @@ choice of what to do next stays theirs:
 <disclaw>
 <time>2026-05-12 09:35</time>
 No new Discord activity since you last responded. Use `disclaw-ctl
-sleep` to wait until something happens, or use this run however you
-like — write notes, check the system, edit your sysprompt.
+sleep` to wait until something happens, or use this time however you
+like.
 </disclaw>
 ```
 
