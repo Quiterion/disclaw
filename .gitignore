@@ -3,3 +3,14 @@
 **/node_modules
 **/dist
 *.log
+
+# Local daemon runtime state (state.json, sysprompt.txt, disclaw.sock,
+# missed-pings.log) when the daemon's started from a project-root cwd
+# with the default DISCLAW_RUNTIME_DIR. Test runs with their own
+# DISCLAW_RUNTIME_DIR (e.g. dev-test.sh's scratch dir) live elsewhere.
+.disclaw/
+
+# Agent-written artifacts that may land in cwd (e.g. feedback.md from
+# a testing instance writing per welcome.testing.md). Track manually
+# if a particular one is worth preserving.
+feedback.md

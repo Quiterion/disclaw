@@ -35,12 +35,18 @@ Common patterns:
 cat orientation.md | disclaw-ctl sysprompt set --stdin
 ```
 
-> Wherever a `<channel_id>` argument appears below, you can also pass
-> `#name` (e.g. `disclaw-ctl send #general "..."`). Numeric IDs are
-> always unambiguous; name form is scanned across all guilds the bot
-> is in and the first match wins, which is fine when the bot is in
-> one server but a footgun if multiple servers share a channel name —
-> use the numeric ID when in doubt.
+> For most verbs that take a `<channel_id>`, you can also pass `#name`
+> (e.g. `disclaw-ctl send #general "..."`). Numeric IDs are always
+> unambiguous; name form is scanned across all guilds the bot is in
+> and the first match wins.
+>
+> **Exception: `subscribe` / `unsubscribe` require numeric IDs.**
+> Subscriptions are stored by ID for routing-side matching, and
+> resolving a name at subscribe-time on a cross-guild collision would
+> silently subscribe the wrong channel — a *recurring* footgun (every
+> message in the wrong channel becomes a follow_up forever), much
+> worse than the one-shot version for `send`. Use `disclaw-ctl
+> channels` to look up the numeric ID first.
 
 ## Discord — finding channels
 
@@ -62,6 +68,10 @@ disclaw-ctl subscribe <channel_id>            # see ambient messages from this c
 disclaw-ctl unsubscribe <channel_id>          # stop seeing them
 disclaw-ctl list                              # which channels are you subscribed to
 ```
+
+**Use the numeric channel_id, not `#name`.** Subscribe/unsubscribe are
+the exception to the `#name` shortcut — see the note at the top of
+this file. `disclaw-ctl channels` returns each channel's numeric `id`.
 
 ## Discord — reading
 

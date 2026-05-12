@@ -84,8 +84,14 @@ Idle nudges + sleep (your relationship with your own attention):
 
 Use \`channels\` to find channel IDs. They're long numbers like 1503391358076059762.
 
-For any <channel_id> argument you can also use #name (e.g. #general). Numeric is
-unambiguous; name form scans all guilds and takes the first match.
+For most <channel_id> args you can use #name (e.g. #general) instead of the
+numeric id. Numeric is unambiguous; name form scans all guilds and takes the
+first match.
+
+Exception: subscribe / unsubscribe require numeric ids — name resolution at
+subscribe-time on a cross-guild collision would silently subscribe the wrong
+channel, which is a recurring footgun (every message in the wrong channel
+becomes a follow_up forever).
 `;
 
 function readStdinSync(): string {
