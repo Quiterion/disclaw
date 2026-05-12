@@ -48,6 +48,12 @@ export type CtlResponse<T = unknown> = CtlResponseOk<T> | CtlResponseError;
 // ── State payload (returned by get-state) ────────────────────────────────
 
 export interface DaemonState {
+  daemon: {
+    /** Daemon process uptime in milliseconds. */
+    uptime_ms: number;
+    /** ms since the most recent inbound event (Discord or agent_end). null if none yet. */
+    last_event_ms_ago: number | null;
+  };
   pi: {
     isStreaming: boolean;
     isCompacting: boolean;

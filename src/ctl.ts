@@ -38,7 +38,10 @@ Discord — ping mode (how mentions/DMs reach you):
   disclaw-ctl set ping-mode none            mute pings entirely
 
 Discord — talk:
-  disclaw-ctl send <channel_id> <content>   send a message to a channel
+  disclaw-ctl send <channel_id> <content>           send a message
+  disclaw-ctl send --quiet <channel_id> <content>   ditto, but print just
+                                                    the jump URL on success
+                                                    (lighter for conversational use)
   disclaw-ctl history <channel_id> [limit]  read recent messages from a channel
   disclaw-ctl channels                      list channels visible to the bot
 
@@ -164,12 +167,24 @@ function parseArgs(argv: string[]): CtlRequest {
       return { cmd: "wake", req_id: reqId };
 
     case "send": {
-      const channel_id = rest[0];
-      const content = rest.slice(1).join(" ");
+      // Support `disclaw-ctl send --quiet <ch> <content...>` to suppress
+      // the JSON wrapper and print just the jump URL on success.
+      // Position: --quiet may appear before the channel_id.
+      const args = rest.slice();
+      const quietIdx = args.indexOf("--quiet");
+      if (quietIdx !== -1) args.splice(quietIdx, 1);
+      const channel_id = args[0];
+      const content = args.slice(1).join(" ");
       if (!channel_id || !content) {
-        die("usage: disclaw-ctl send <channel_id> <content...>");
+        die("usage: disclaw-ctl send [--quiet] <channel_id> <content...>");
       }
-      return { cmd: "discord-send", req_id: reqId, channel_id, content };
+      return {
+        _quiet: quietIdx !== -1,
+        cmd: "discord-send",
+        req_id: reqId,
+        channel_id,
+        content,
+      } as any;
     }
 
     case "history": {
@@ -244,6 +259,24 @@ async function main(): Promise<void> {
       die(`connection refused at ${SOCKET_PATH} — daemon not accepting connections`);
     }
     die(err?.message ?? String(err));
+  }
+
+  // --quiet path for send: just print the jump URL on success.
+  // Strip the internal _quiet marker before serializing if we ever
+  // emitted the full response.
+  const quiet = (req as any)._quiet === true;
+  delete (req as any)._quiet;
+
+  if (quiet && req.cmd === "discord-send" && resp.ok) {
+    const jumpUrl = (resp as any)?.result?.result?.jump_url;
+    const messageId = (resp as any)?.result?.result?.message_id;
+    if (jumpUrl) {
+      process.stdout.write(jumpUrl + "\n");
+    } else if (messageId) {
+      process.stdout.write(messageId + "\n");
+    }
+    // else: silent on success with no useful identifier
+    process.exit(0);
   }
 
   process.stdout.write(JSON.stringify(resp, null, 2) + "\n");

@@ -43,6 +43,13 @@ function discordUnavailable(req_id: string): CtlResponse {
 }
 
 async function main(): Promise<void> {
+  const daemonStartTime = Date.now();
+  // Updated by both the agent's event stream (on agent_end) and discli's
+  // inbound events (on any Discord message). "Last time something happened"
+  // is what the agent often wants to know — not "last keystroke" but
+  // "last meaningful event."
+  let lastEventTime: number | null = null;
+
   log(`starting; provider=${PROVIDER} model=${MODEL}`);
 
   // ── State + first-run bootstrap ─────────────────────────────────────
@@ -91,7 +98,10 @@ async function main(): Promise<void> {
     // Idle-nudge lifecycle: cancel pending nudge when a run starts;
     // schedule a fresh nudge after a run ends.
     if (event.type === "agent_start") cancelNudgeTimer();
-    if (event.type === "agent_end") scheduleNudgeTimer();
+    if (event.type === "agent_end") {
+      scheduleNudgeTimer();
+      lastEventTime = Date.now();
+    }
   });
 
   // ── Idle nudges + sleep state ───────────────────────────────────────
@@ -184,7 +194,12 @@ async function main(): Promise<void> {
         return { req_id: req.req_id, ok: true, result: "pong" };
 
       case "get-state": {
+        const now = Date.now();
         const out: DaemonState = {
+          daemon: {
+            uptime_ms: now - daemonStartTime,
+            last_event_ms_ago: lastEventTime === null ? null : now - lastEventTime,
+          },
           pi: {
             isStreaming: host.isStreaming,
             isCompacting: host.isCompacting,
@@ -374,6 +389,7 @@ async function main(): Promise<void> {
           // host event handler; sleep just clears.)
           cancelNudgeTimer();
           if (sleep) cancelSleep();
+          lastEventTime = Date.now();
           deliverToAgent(decision.mode, decision.userMessage);
         } else if (event.event === "ready") {
           log(`[discord] ready as ${event.bot_name} (${event.bot_id})`);
