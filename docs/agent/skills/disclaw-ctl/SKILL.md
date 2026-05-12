@@ -98,10 +98,38 @@ something directed at you:
 - **`[server-name / #general] alice: ...`** — ambient channel traffic
   from a channel you've subscribed to. Came in as a follow-up after
   your most recent run finished.
+- **`[activity] #help: 3 msgs, #random: 12 msgs since you last checked`** —
+  the activity digest tail. Tells you which *unsubscribed* channels
+  have had traffic since your last incoming message. Sidebar-style:
+  counts only, no content. Resets every time it gets delivered.
 
 The `[ping]` prefix is the explicit "this is a notification for you,"
 the `[server / #channel] author:` prefix is "you're hearing this
-because you chose to lurk here."
+because you chose to lurk here," and `[activity]` is the
+glance-at-the-sidebar — channels you might want to look at but haven't
+opted into streaming.
+
+## Discord — activity digest
+
+Counts of unsubscribed-channel non-mention messages since the last
+flush. Modeled on Discord's sidebar unread badges: a way to notice
+"#random has been busy" without subscribing and getting every line.
+
+```
+disclaw-ctl set digest-mode follow_up   # auto-deliver: piggyback on next flush / nudge
+disclaw-ctl set digest-mode none        # off; query manually with `disclaw-ctl digest`
+disclaw-ctl digest                      # show what's currently accumulated (peek; doesn't reset)
+```
+
+Subscribed-channel and ping traffic don't appear in the digest —
+they're delivered through their own paths and counting them would be
+redundant. Only ambient activity in channels you're *not* listening to
+shows up here.
+
+The counter resets when it gets delivered (drained into a flush tail
+or nudge). Reading history of a channel does *not* reset its count —
+inspection and the digest are kept independent so calling `history`
+doesn't have surprising side-effects.
 
 ## Idle nudges + sleep
 

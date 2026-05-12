@@ -20,7 +20,7 @@ export const RUNTIME_DIR = process.env.DISCLAW_RUNTIME_DIR ?? join(homedir(), ".
 export const STATE_FILE = join(RUNTIME_DIR, "state.json");
 export const SYSPROMPT_FILE = process.env.DISCLAW_SYSPROMPT_FILE ?? join(RUNTIME_DIR, "sysprompt.txt");
 
-import type { PingMode } from "./protocol.js";
+import type { DigestMode, PingMode } from "./protocol.js";
 
 export interface RouterState {
   initialized: boolean;
@@ -29,6 +29,11 @@ export interface RouterState {
   subscriptions: string[];
   /** How pings (mentions/DMs) are delivered. Opt-in: defaults to "none". */
   ping_mode: PingMode;
+  /**
+   * How the activity digest is delivered. Opt-in: defaults to "none"
+   * (agent can still query it on demand via `disclaw-ctl digest`).
+   */
+  digest_mode: DigestMode;
   /**
    * How long after an agent_run ends before the daemon sends a quiet
    * idle nudge ("no new activity, you can sleep or do whatever").
@@ -50,6 +55,7 @@ const DEFAULT_STATE: RouterState = {
   sysprompt: "",
   subscriptions: [],
   ping_mode: "none",
+  digest_mode: "none",
   idle_nudge_timeout_ms: 60_000,
   last_session_file: null,
 };

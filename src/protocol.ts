@@ -7,6 +7,15 @@
  */
 
 export type PingMode = "push" | "follow_up" | "none";
+/**
+ * How the activity digest (counts of unsubscribed-channel messages) is
+ * delivered. `follow_up` piggybacks the digest on whatever flush fires
+ * next (or on the idle nudge if nothing else does); `none` keeps it
+ * fully off-channel — the agent can still inspect it via `disclaw-ctl
+ * digest`. `push` is intentionally not offered (digest is ambient
+ * background, never an interrupt).
+ */
+export type DigestMode = "follow_up" | "none";
 
 // ── Requests (ctl → daemon) ──────────────────────────────────────────────
 
@@ -24,6 +33,8 @@ export type CtlRequest =
   | { cmd: "discord-history"; req_id: string; channel_id: string; limit?: number }
   | { cmd: "discord-channels"; req_id: string; guild_id?: string }
   | { cmd: "set-idle-nudge-timeout"; req_id: string; timeout_ms: number | null }
+  | { cmd: "set-digest-mode"; req_id: string; mode: DigestMode }
+  | { cmd: "digest"; req_id: string }
   | { cmd: "sleep"; req_id: string; duration_ms?: number }
   | { cmd: "wake"; req_id: string };
 
@@ -71,6 +82,7 @@ export interface DaemonState {
     sysprompt_chars: number;
     subscriptions: string[];
     ping_mode: PingMode;
+    digest_mode: DigestMode;
     idle_nudge_timeout_ms: number | null;
     /** Sleep state — only set while the agent has requested dormancy. */
     sleep?: {

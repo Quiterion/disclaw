@@ -25,7 +25,8 @@ import { DiscliProcess } from "./discli-io.js";
 import { routeDiscordEvent, type DiscliMessageEvent } from "./routing.js";
 import { BufferManager } from "./buffering.js";
 import { wrapDisclaw } from "./formatting.js";
-import type { CtlRequest, CtlResponse, DaemonState, PingMode } from "./protocol.js";
+import { DigestAccumulator, formatDigest } from "./digest.js";
+import type { CtlRequest, CtlResponse, DaemonState, DigestMode, PingMode } from "./protocol.js";
 
 const PROVIDER = process.env.DISCLAW_PROVIDER ?? "anthropic";
 const MODEL = process.env.DISCLAW_MODEL ?? "claude-haiku-4-5";
@@ -99,6 +100,29 @@ async function main(): Promise<void> {
     }
     if (event.type === "tool_execution_start") {
       log(`[event] tool_execution_start(${event.toolName})`);
+    } else if (event.type === "message_end") {
+      // Surface errored/aborted streams. A normal turn ends with stopReason
+      // like "stop"/"toolUse"; an interrupted API stream ends with
+      // stopReason="error" (with errorMessage) or "aborted". Without this
+      // log line the daemon view of an errored turn is indistinguishable
+      // from a long successful one — see 2026-05-12 09:11:17 incident
+      // where a 5-min "terminated" turn looked like normal streaming.
+      const msg = event.message;
+      const stopReason = msg?.stopReason;
+      if (stopReason === "error" || stopReason === "aborted") {
+        const detail = msg?.errorMessage ? `: ${msg.errorMessage}` : "";
+        log(`[error] message_end stopReason=${stopReason}${detail}`);
+      } else {
+        log(`[event] ${event.type}`);
+      }
+    } else if (event.type === "auto_retry_start") {
+      log(
+        `[retry] auto_retry_start attempt=${event.attempt}/${event.maxAttempts} ` +
+          `delay=${event.delayMs}ms reason=${JSON.stringify(event.errorMessage)}`,
+      );
+    } else if (event.type === "auto_retry_end") {
+      const tail = event.success ? "" : ` finalError=${JSON.stringify(event.finalError ?? "")}`;
+      log(`[retry] auto_retry_end attempt=${event.attempt} success=${event.success}${tail}`);
     } else {
       log(`[event] ${event.type}`);
     }
@@ -185,7 +209,7 @@ async function main(): Promise<void> {
       : "No new Discord activity since you last responded. " +
         "Use `disclaw-ctl sleep` to wait until something happens, or use this run however you " +
         "like — write notes, check the system, edit your sysprompt.";
-    host.prompt(wrapDisclaw(text)).catch((err) => log(`[nudge-error] ${err.message}`));
+    host.prompt(composeAndWrap(text)).catch((err) => log(`[nudge-error] ${err.message}`));
   }
 
   function requestSleep(durationMs?: number): void {
@@ -215,6 +239,23 @@ async function main(): Promise<void> {
     sleep = null;
   }
 
+  // ── Activity digest ─────────────────────────────────────────────────
+  // Counts of unsubscribed-channel non-mention messages since the last
+  // flush. Piggybacks on whatever flush fires next; resets on drain.
+  // `composeAndWrap` is the single place that both buffered batches and
+  // standalone messages (idle nudges, bootstrap) go through, so the
+  // digest tail attaches uniformly without each call site re-deriving
+  // it.
+  const digest = new DigestAccumulator();
+
+  function composeAndWrap(coreBody: string): string {
+    if (state.digest_mode !== "follow_up" || digest.isEmpty()) {
+      return wrapDisclaw(coreBody);
+    }
+    const tail = formatDigest(digest.drain());
+    return wrapDisclaw(tail ? `${coreBody}\n${tail}` : coreBody);
+  }
+
   // ── Buffering layer ─────────────────────────────────────────────────
   // Per-mode event buffers + flush triggers. Routing classifies an
   // arriving Discord event; the daemon enqueues into the appropriate
@@ -227,23 +268,24 @@ async function main(): Promise<void> {
   // (formatting.ts), gets wrapped in `<disclaw>...</disclaw>`, and
   // dispatches via the appropriate AgentHost method.
   const buffer = new BufferManager({
-    dispatch: (kind, wrappedMessage) => {
+    dispatch: (kind, body) => {
+      const wrapped = composeAndWrap(body);
       // Re-check pi state at dispatch time. The "prompt" buffer might
       // have been queued while pi was idle but pi could have started
       // streaming during the debounce — in that case route as follow_up.
       if (kind === "prompt" && !host.isIdle) {
-        host.followUp(wrappedMessage);
+        host.followUp(wrapped);
         return;
       }
       // Symmetric: if a "push"/"follow_up" buffer flushes and pi is
       // somehow idle (unusual but possible), deliver as prompt.
       if (kind !== "prompt" && host.isIdle) {
-        host.prompt(wrappedMessage).catch((err) => log(`[deliver-error] ${err.message}`));
+        host.prompt(wrapped).catch((err) => log(`[deliver-error] ${err.message}`));
         return;
       }
-      if (kind === "push") host.steer(wrappedMessage);
-      else if (kind === "follow_up") host.followUp(wrappedMessage);
-      else host.prompt(wrappedMessage).catch((err) => log(`[deliver-error] ${err.message}`));
+      if (kind === "push") host.steer(wrapped);
+      else if (kind === "follow_up") host.followUp(wrapped);
+      else host.prompt(wrapped).catch((err) => log(`[deliver-error] ${err.message}`));
     },
   });
 
@@ -272,6 +314,7 @@ async function main(): Promise<void> {
             sysprompt_chars: state.sysprompt.length,
             subscriptions: [...state.subscriptions],
             ping_mode: state.ping_mode,
+            digest_mode: state.digest_mode,
             idle_nudge_timeout_ms: state.idle_nudge_timeout_ms,
             ...(sleep ? { sleep: { until_ms: sleep.until_ms } } : {}),
           },
@@ -348,6 +391,31 @@ async function main(): Promise<void> {
         state = { ...state, ping_mode: req.mode };
         saveState(state);
         return { req_id: req.req_id, ok: true, result: { ping_mode: req.mode } };
+      }
+
+      case "set-digest-mode": {
+        const valid: DigestMode[] = ["follow_up", "none"];
+        if (!valid.includes(req.mode)) {
+          return {
+            req_id: req.req_id,
+            ok: false,
+            error: `digest-mode must be one of: ${valid.join(", ")}`,
+          };
+        }
+        state = { ...state, digest_mode: req.mode };
+        saveState(state);
+        return { req_id: req.req_id, ok: true, result: { digest_mode: req.mode } };
+      }
+
+      case "digest": {
+        // Peek (non-destructive). The agent inspecting the digest
+        // doesn't reset the counter — only a flush dispatch (or absent
+        // it, the next idle nudge with digest_mode=follow_up) drains.
+        return {
+          req_id: req.req_id,
+          ok: true,
+          result: { entries: digest.peek(), mode: state.digest_mode },
+        };
       }
 
       case "set-idle-nudge-timeout": {
@@ -436,6 +504,13 @@ async function main(): Promise<void> {
             bot_id: discli?.botId,
           });
           if (decision.kind === "drop") {
+            // Unsubscribed-channel non-mentions feed the activity digest.
+            // Other drop reasons (self-message, ping with mode=none) are
+            // not digest material — the former is our own echo, the
+            // latter is a missed ping (logged separately in slice D).
+            if (decision.reason === "unsubscribed channel, no mention") {
+              digest.note(msgEvent);
+            }
             log(
               `[discord-drop] [#${msgEvent.channel}] ${msgEvent.author}: ${decision.reason}`,
             );
@@ -490,7 +565,7 @@ async function main(): Promise<void> {
 
   if (bootstrap.firstRunPrompt !== null) {
     log(`[bootstrap] sending first-run prompt`);
-    host.prompt(wrapDisclaw(bootstrap.firstRunPrompt)).catch((err) => {
+    host.prompt(composeAndWrap(bootstrap.firstRunPrompt)).catch((err) => {
       log(`[bootstrap] first-run prompt failed: ${err.message}`);
     });
   }

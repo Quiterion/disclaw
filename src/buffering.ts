@@ -19,7 +19,7 @@
  * pi state at the time of dispatch — if pi started streaming during
  * the debounce, the buffer is delivered as follow_up instead.
  */
-import { formatBatch, wrapDisclaw, type BufferedEvent } from "./formatting.js";
+import { formatBatch, type BufferedEvent } from "./formatting.js";
 
 export type BufferKind = "follow_up" | "push" | "prompt";
 
@@ -28,8 +28,15 @@ export interface BufferingOptions {
   debounceMs?: number;
   /** Truncation length for push-mode pings. Default: 150. */
   pingPreviewLength?: number;
-  /** Called to deliver a wrapped user-message string to the agent. */
-  dispatch: (kind: BufferKind, wrappedMessage: string) => void;
+  /**
+   * Called to deliver the formatted (but un-wrapped) batch body to the
+   * agent. The dispatch layer is responsible for appending any tail
+   * content (e.g. activity digest) and wrapping in `<disclaw>...
+   * </disclaw>` before sending. Keeping wrap+tail composition outside
+   * BufferManager means idle nudges and bootstrap prompts share the
+   * same composition path as buffered batches.
+   */
+  dispatch: (kind: BufferKind, body: string) => void;
 }
 
 export class BufferManager {
@@ -86,7 +93,7 @@ export class BufferManager {
       pingStyle: kind === "push" ? "push" : "follow_up",
       pingPreviewLength: this.pingPreviewLength,
     });
-    this.dispatch(kind, wrapDisclaw(body));
+    this.dispatch(kind, body);
   }
 
   /** Drop all buffered events for a given kind without dispatching. */

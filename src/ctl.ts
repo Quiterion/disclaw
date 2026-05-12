@@ -37,6 +37,11 @@ Discord — ping mode (how mentions/DMs reach you):
   disclaw-ctl set ping-mode follow_up       deliver after current run finishes
   disclaw-ctl set ping-mode none            mute pings entirely
 
+Discord — activity digest (sidebar-like unread counts for unsubscribed channels):
+  disclaw-ctl set digest-mode follow_up     piggyback digest on next flush / nudge
+  disclaw-ctl set digest-mode none          no auto-delivery; query on demand
+  disclaw-ctl digest                        show current accumulated digest (peek)
+
 Discord — talk:
   disclaw-ctl send <channel_id> <content>           send a message
   disclaw-ctl send --quiet <channel_id> <content>   ditto, but print just
@@ -132,6 +137,12 @@ function parseArgs(argv: string[]): CtlRequest {
         }
         return { cmd: "set-ping-mode", req_id: reqId, mode: value };
       }
+      if (key === "digest-mode") {
+        if (value !== "follow_up" && value !== "none") {
+          die("digest-mode must be one of: follow_up, none");
+        }
+        return { cmd: "set-digest-mode", req_id: reqId, mode: value };
+      }
       if (key === "idle-nudge-timeout") {
         if (!value) die('usage: disclaw-ctl set idle-nudge-timeout <duration|off>');
         let timeout_ms: number | null;
@@ -165,6 +176,9 @@ function parseArgs(argv: string[]): CtlRequest {
 
     case "wake":
       return { cmd: "wake", req_id: reqId };
+
+    case "digest":
+      return { cmd: "digest", req_id: reqId };
 
     case "send": {
       // Support `disclaw-ctl send --quiet <ch> <content...>` to suppress
