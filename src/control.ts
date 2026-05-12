@@ -9,13 +9,13 @@
 import { createServer, type Server, type Socket } from "node:net";
 import { unlink } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { mkdir } from "node:fs/promises";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.js";
+import { RUNTIME_DIR } from "./state.js";
 import type { CtlRequest, CtlResponse } from "./protocol.js";
 
-export const RUNTIME_DIR = join(homedir(), ".disclaw");
+export { RUNTIME_DIR };
 export const SOCKET_PATH = join(RUNTIME_DIR, "disclaw.sock");
 
 export type RequestHandler = (
