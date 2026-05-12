@@ -3,8 +3,16 @@
  *
  * Listens at SOCKET_PATH, accepts JSONL connections, dispatches each
  * request to the supplied handler. Multiple concurrent clients OK
- * (each is a fresh JSONL session). Cleans up the socket file on
- * shutdown.
+ * (each is a fresh JSONL session).
+ *
+ * Socket-file lifecycle: cleaned up at *startup* (the existsSync check
+ * before listen), never at shutdown. Shutdown-time unlink is unsafe:
+ * if two daemons race on the same path (operator bungles a restart),
+ * the first to die unlinks the socket file out from under the second
+ * — which is then alive but unreachable via the filesystem. The
+ * startup-only cleanup pattern leaves a dead socket file on the disk
+ * after a clean shutdown, which is harmless (next daemon unlinks it
+ * before binding).
  */
 import { createServer, type Server, type Socket } from "node:net";
 import { unlink } from "node:fs/promises";
@@ -49,13 +57,7 @@ export class ControlServer {
     for (const s of this.sockets) s.destroy();
     this.sockets.clear();
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
-    if (existsSync(SOCKET_PATH)) {
-      try {
-        await unlink(SOCKET_PATH);
-      } catch {
-        // Best effort
-      }
-    }
+    // Intentionally NOT unlinking SOCKET_PATH — see file-level comment.
   }
 
   private onConnection(sock: Socket): void {
