@@ -36,6 +36,13 @@ export interface RouterState {
    * Default: 60000 (60s).
    */
   idle_nudge_timeout_ms: number | null;
+  /**
+   * Path to the most recent pi session file the daemon observed.
+   * On daemon restart, we pass this as `--session <path>` to pi so the
+   * agent's transcript continues seamlessly across the restart instead
+   * of starting fresh. null on first run.
+   */
+  last_session_file: string | null;
 }
 
 const DEFAULT_STATE: RouterState = {
@@ -44,6 +51,7 @@ const DEFAULT_STATE: RouterState = {
   subscriptions: [],
   ping_mode: "none",
   idle_nudge_timeout_ms: 60_000,
+  last_session_file: null,
 };
 
 function ensureDir(path: string): void {

@@ -16,6 +16,7 @@
  * Usage:
  *   npm run daemon
  */
+import { existsSync } from "node:fs";
 import { AgentHost } from "./agent-host.js";
 import { ControlServer, SOCKET_PATH } from "./control.js";
 import { loadState, saveState, type RouterState } from "./state.js";
@@ -67,12 +68,17 @@ async function main(): Promise<void> {
   // ── Build the agent ────────────────────────────────────────────────
   // Pi inherits this process's cwd. Extensions (our sysprompt + pi-acm)
   // are loaded by absolute path in AgentHost so they don't depend on
-  // cwd.
+  // cwd. Session resumption: if we have a recorded session file from a
+  // previous daemon run, pass it so pi continues that transcript.
+  if (state.last_session_file) {
+    log(`[session] resuming from ${state.last_session_file}`);
+  }
   const host = new AgentHost({
     provider: PROVIDER,
     modelId: MODEL,
     modelName: MODEL_NAME,
     initialSysprompt: state.sysprompt,
+    resumeSessionFile: state.last_session_file,
   });
 
   let assistantTextBuffer = "";
@@ -101,8 +107,38 @@ async function main(): Promise<void> {
     if (event.type === "agent_end") {
       scheduleNudgeTimer();
       lastEventTime = Date.now();
+      // Refresh tracked sessionFile in case pi rotated sessions.
+      // Fire-and-forget; not worth blocking on.
+      void refreshSessionFile();
     }
   });
+
+  /**
+   * Pull pi's current sessionFile via get_state RPC and persist it to
+   * router state — but only if the file actually exists on disk. Pi
+   * reports the sessionFile path eagerly (right after spawn) but only
+   * writes the file lazily (on first agent_run). Persisting a path that
+   * doesn't exist yet would mean passing --session on next restart for
+   * a missing file, and pi would create a fresh session anyway. So we
+   * wait until pi has actually committed content.
+   *
+   * Best-effort: called once shortly after startup, then on every
+   * agent_end. The first call captures any pre-existing session pi
+   * resumed; subsequent calls catch any session rotation.
+   */
+  async function refreshSessionFile(): Promise<void> {
+    try {
+      const piState: any = await host.pi.send({ type: "get_state" });
+      const sf: string | undefined = piState.data?.sessionFile;
+      if (sf && existsSync(sf) && sf !== state.last_session_file) {
+        state = { ...state, last_session_file: sf };
+        saveState(state);
+        log(`[session] tracking ${sf}`);
+      }
+    } catch {
+      // pi not ready or has exited — not fatal
+    }
+  }
 
   // ── Idle nudges + sleep state ───────────────────────────────────────
   // Both are in-memory only — daemon restart wakes any sleeping agent
@@ -423,6 +459,11 @@ async function main(): Promise<void> {
       log(`[bootstrap] first-run prompt failed: ${err.message}`);
     });
   }
+
+  // Give pi a moment to settle, then capture its sessionFile path so
+  // we can resume from the same file on next restart. (pi populates
+  // sessionFile lazily but typically very early; this catches it.)
+  setTimeout(() => void refreshSessionFile(), 1500);
 
   // ── Shutdown ────────────────────────────────────────────────────────
   let shuttingDown = false;

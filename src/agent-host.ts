@@ -45,6 +45,13 @@ export interface AgentHostOptions {
   initialSysprompt?: string;
   /** Path to pi binary. Default: node_modules/.bin/pi. */
   piBin?: string;
+  /**
+   * Optional pi session file to resume from. If the path exists, pi is
+   * spawned with `--session <path>` and continues writing to that file.
+   * If null/undefined or the path doesn't exist, pi starts a fresh
+   * session.
+   */
+  resumeSessionFile?: string | null;
 }
 
 export class AgentHost extends EventEmitter {
@@ -74,6 +81,17 @@ export class AgentHost extends EventEmitter {
     const piAcmDir = resolve(REPO_ROOT, "third_party/pi-acm");
     const piAcmSkill = resolve(REPO_ROOT, "third_party/pi-acm/skills/acm");
 
+    // If we have a previously-recorded session file path, pass it to pi
+    // via --session so it resumes that session. Pi creates session files
+    // lazily (on first prompt), so a path may be recorded before the
+    // file actually exists; pi handles this by writing to that path
+    // when the first agent_run happens. The daemon refreshes the
+    // recorded path after every agent_end in case pi rotated sessions.
+    const sessionArgs: string[] = [];
+    if (opts.resumeSessionFile) {
+      sessionArgs.push("--session", opts.resumeSessionFile);
+    }
+
     this.pi = new PiProcess({
       command: piBin,
       args: [
@@ -83,6 +101,7 @@ export class AgentHost extends EventEmitter {
         "--extension", syspromptExtDir,
         "--extension", piAcmDir,
         "--skill", piAcmSkill,
+        ...sessionArgs,
       ],
       env: {
         ...process.env,
