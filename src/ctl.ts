@@ -41,6 +41,8 @@ Discord — activity digest (sidebar-like unread counts for unsubscribed channel
   disclaw-ctl set digest-mode follow_up     piggyback digest on next flush / nudge
   disclaw-ctl set digest-mode none          no auto-delivery; query on demand
   disclaw-ctl digest                        show current accumulated digest (peek)
+  disclaw-ctl digest ack                    mark all unread channels as read
+  disclaw-ctl digest ack <channel_id>       mark just one channel as read
 
 Discord — missed pings (review pings that were dropped while ping-mode = none):
   disclaw-ctl missed-pings                  show all missed pings (most recent last)
@@ -182,8 +184,19 @@ function parseArgs(argv: string[]): CtlRequest {
     case "wake":
       return { cmd: "wake", req_id: reqId };
 
-    case "digest":
+    case "digest": {
+      // disclaw-ctl digest                  → peek
+      // disclaw-ctl digest ack              → drain all channels
+      // disclaw-ctl digest ack <channel>    → drain just that channel
+      if (rest[0] === "ack") {
+        const channel_id = rest[1];
+        if (channel_id) {
+          return { cmd: "digest-ack", req_id: reqId, channel_id };
+        }
+        return { cmd: "digest-ack", req_id: reqId };
+      }
       return { cmd: "digest", req_id: reqId };
+    }
 
     case "missed-pings": {
       // disclaw-ctl missed-pings           → all

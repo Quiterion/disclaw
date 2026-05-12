@@ -420,6 +420,19 @@ async function main(): Promise<void> {
         };
       }
 
+      case "digest-ack": {
+        // Explicit "I've read this" — the agent can dismiss the
+        // accumulated count for one channel (or all) without waiting
+        // for a flush to drain it. Decoupled from `history` and
+        // `digest` (peek) so inspection has no side effects.
+        const cleared = digest.clear(req.channel_id);
+        return {
+          req_id: req.req_id,
+          ok: true,
+          result: { cleared, scope: req.channel_id ?? "all" },
+        };
+      }
+
       case "missed-pings": {
         const all = readMissedPings(MISSED_PINGS_FILE);
         const limit = req.limit;

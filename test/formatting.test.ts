@@ -2,13 +2,16 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   formatBatch,
-  formatRelativeTime,
+  formatTimeOpener,
+  formatWallTime,
   wrapDisclaw,
   type BufferedEvent,
 } from "../src/formatting.js";
 import type { DiscliMessageEvent } from "../src/routing.js";
 
-const NOW = 1_000_000_000_000; // arbitrary fixed "now" for relative times
+// Fixed point in time so wall-clock tests are deterministic.
+// 2026-05-12 20:54:00 in the test runner's local timezone.
+const ANCHOR = new Date(2026, 4, 12, 20, 54, 0).getTime();
 
 function ev(overrides: Partial<DiscliMessageEvent> = {}): DiscliMessageEvent {
   return {
@@ -29,50 +32,62 @@ function ev(overrides: Partial<DiscliMessageEvent> = {}): DiscliMessageEvent {
   };
 }
 
-function buf(eventOverrides: Partial<DiscliMessageEvent>, secondsAgo: number, cls: "ping" | "channel" = "channel"): BufferedEvent {
+function bufAt(eventOverrides: Partial<DiscliMessageEvent>, atMs: number, cls: "ping" | "channel" = "channel"): BufferedEvent {
   return {
     ev: ev(eventOverrides),
     class: cls,
-    arrivedAt: NOW - secondsAgo * 1000,
+    arrivedAt: atMs,
   };
 }
 
-const optsFollowUp = { now: NOW, pingStyle: "follow_up" as const, pingPreviewLength: 150 };
-const optsPush = { now: NOW, pingStyle: "push" as const, pingPreviewLength: 150 };
+const optsFollowUp = { pingStyle: "follow_up" as const, pingPreviewLength: 150 };
+const optsPush = { pingStyle: "push" as const, pingPreviewLength: 150 };
 
-// ── Relative time ─────────────────────────────────────────────────────────
+// ── Wall-clock helpers ────────────────────────────────────────────────────
 
-test("formatRelativeTime: seconds, minutes, hours", () => {
-  assert.equal(formatRelativeTime(NOW - 5_000, NOW), "5s ago");
-  assert.equal(formatRelativeTime(NOW - 90_000, NOW), "2m ago");
-  assert.equal(formatRelativeTime(NOW - 9_000_000, NOW), "2.5h ago");
+test("formatWallTime: zero-pads HH:MM", () => {
+  // 09:05 in local time
+  assert.equal(formatWallTime(new Date(2026, 4, 12, 9, 5).getTime()), "09:05");
+  // midnight
+  assert.equal(formatWallTime(new Date(2026, 4, 12, 0, 0).getTime()), "00:00");
+  // late evening (24h, no am/pm)
+  assert.equal(formatWallTime(new Date(2026, 4, 12, 23, 59).getTime()), "23:59");
 });
 
-test("formatRelativeTime: clamps negative deltas to 0", () => {
-  // future timestamp shouldn't yield negative-time formatting
-  assert.equal(formatRelativeTime(NOW + 5_000, NOW), "0s ago");
+test("formatTimeOpener: YYYY-MM-DD HH:MM in local time", () => {
+  assert.equal(
+    formatTimeOpener(new Date(2026, 4, 12, 20, 54).getTime()),
+    "2026-05-12 20:54",
+  );
+  assert.equal(
+    formatTimeOpener(new Date(2026, 0, 1, 0, 0).getTime()),
+    "2026-01-01 00:00",
+  );
 });
 
 // ── Single events ─────────────────────────────────────────────────────────
 
-test("single channel message: collapses to one-liner", () => {
-  const out = formatBatch([buf({ author: "alice", content: "hi" }, 5)], optsFollowUp);
-  assert.equal(out, "[Test Server / #general] alice (5s ago): hi");
+test("single channel message: collapses to one-liner with wall time + uid", () => {
+  const out = formatBatch(
+    [bufAt({ author: "alice", author_id: "U-alice", content: "hi" }, ANCHOR)],
+    optsFollowUp,
+  );
+  assert.equal(out, "[Test Server / #general] alice (20:54) (uid:U-alice): hi");
 });
 
 test("single push ping: short content, no truncation tail", () => {
   const out = formatBatch(
-    [buf({ author: "alice", content: "hey", mentions_bot: true }, 3, "ping")],
+    [bufAt({ author: "alice", content: "hey", mentions_bot: true }, ANCHOR, "ping")],
     optsPush,
   );
-  assert.match(out, /\[ping\] alice \(3s ago\) in Test Server \/ #general: "hey"/);
+  assert.match(out, /\[ping\] alice \(20:54\) \(uid:U-alice\) in Test Server \/ #general: "hey"/);
   assert.doesNotMatch(out, /full via/);
 });
 
 test("single push ping: long content, truncated with pointer", () => {
   const long = "x".repeat(300);
   const out = formatBatch(
-    [buf({ author: "alice", content: long, mentions_bot: true }, 3, "ping")],
+    [bufAt({ author: "alice", content: long, mentions_bot: true }, ANCHOR, "ping")],
     { ...optsPush, pingPreviewLength: 50 },
   );
   assert.match(out, /…/);
@@ -81,52 +96,60 @@ test("single push ping: long content, truncated with pointer", () => {
 
 test("single follow_up ping: full content in dedicated block", () => {
   const out = formatBatch(
-    [buf({ author: "alice", content: "can you take a look?", mentions_bot: true }, 3, "ping")],
+    [bufAt({ author: "alice", content: "can you take a look?", mentions_bot: true }, ANCHOR, "ping")],
     optsFollowUp,
   );
-  assert.match(out, /\[ping\] alice \(3s ago\) mentioned you in Test Server \/ #general:/);
+  assert.match(out, /\[ping\] alice \(20:54\) \(uid:U-alice\) mentioned you in Test Server \/ #general:/);
   assert.match(out, /can you take a look\?/);
 });
 
 test("single DM ping: marked as DM not channel", () => {
   const out = formatBatch(
-    [buf({ author: "alice", is_dm: true, channel: "DM-with-alice", mentions_bot: true }, 3, "ping")],
+    [bufAt({ author: "alice", is_dm: true, channel: "DM-with-alice", mentions_bot: true }, ANCHOR, "ping")],
     optsFollowUp,
   );
-  assert.match(out, /\[ping\] alice \(3s ago\) mentioned you in DM:/);
+  assert.match(out, /\[ping\] alice \(20:54\) \(uid:U-alice\) mentioned you in DM:/);
   assert.doesNotMatch(out, /#DM/);
 });
 
 // ── Multi-event batches ───────────────────────────────────────────────────
 
-test("multiple channel events same channel: header + per-line", () => {
+test("multiple channel events same channel: header + per-line wall times, no 'last activity'", () => {
+  const t0 = new Date(2026, 4, 12, 20, 50).getTime();
+  const t1 = new Date(2026, 4, 12, 20, 51).getTime();
+  const t2 = new Date(2026, 4, 12, 20, 54).getTime();
   const out = formatBatch(
     [
-      buf({ author: "alice", content: "hey opus, around?" }, 240),
-      buf({ author: "bob", content: "I think they're afk" }, 180),
-      buf({ author: "alice", content: "👋" }, 12),
+      bufAt({ author: "alice", author_id: "U-alice", content: "hey opus, around?" }, t0),
+      bufAt({ author: "bob", author_id: "U-bob", content: "I think they're afk" }, t1),
+      bufAt({ author: "alice", author_id: "U-alice", content: "👋" }, t2),
     ],
     optsFollowUp,
   );
-  assert.match(out, /\[Test Server \/ #general — last activity 12s ago\]/);
-  assert.match(out, /alice \(4m ago\): hey opus, around\?/);
-  assert.match(out, /bob \(3m ago\): I think they're afk/);
-  assert.match(out, /alice \(12s ago\): 👋/);
-  // ensure ordering: header first, then events as added
-  const lines = out.split("\n");
-  assert.match(lines[0]!, /last activity 12s ago/);
+  // Header is bare — no "last activity X ago" annotation
+  assert.match(out, /\[Test Server \/ #general\]/);
+  assert.doesNotMatch(out, /last activity/);
+  // Per-line wall times + uids
+  assert.match(out, /alice \(20:50\) \(uid:U-alice\): hey opus, around\?/);
+  assert.match(out, /bob \(20:51\) \(uid:U-bob\): I think they're afk/);
+  assert.match(out, /alice \(20:54\) \(uid:U-alice\): 👋/);
+  // Header first
+  assert.match(out.split("\n")[0]!, /\[Test Server \/ #general\]/);
 });
 
 test("multiple channels: separate sections, sorted by last activity", () => {
+  const aOlder = new Date(2026, 4, 12, 20, 53).getTime();
+  const aNewer = new Date(2026, 4, 12, 20, 54).getTime();
+  const bNewer = new Date(2026, 4, 12, 20, 54, 30).getTime(); // C-B last activity > C-A
   const out = formatBatch(
     [
-      buf({ channel_id: "C-A", channel: "general", author: "alice", content: "morning" }, 120),
-      buf({ channel_id: "C-B", channel: "off-topic", author: "bob", content: "anyone seen..." }, 30),
-      buf({ channel_id: "C-A", channel: "general", author: "charlie", content: "hey" }, 60),
+      bufAt({ channel_id: "C-A", channel: "general", author: "alice", content: "morning" }, aOlder),
+      bufAt({ channel_id: "C-B", channel: "off-topic", author: "bob", content: "anyone seen..." }, bNewer),
+      bufAt({ channel_id: "C-A", channel: "general", author: "charlie", content: "hey" }, aNewer),
     ],
     optsFollowUp,
   );
-  // C-A has last activity 60s ago, C-B has 30s ago. C-A should come first (older).
+  // C-A's last activity is older than C-B's — C-A section should come first
   const idxA = out.indexOf("#general");
   const idxB = out.indexOf("#off-topic");
   assert.ok(idxA < idxB, "older-channel section should appear before newer");
@@ -135,8 +158,8 @@ test("multiple channels: separate sections, sorted by last activity", () => {
 test("ping + channel mixed: ping section comes first", () => {
   const out = formatBatch(
     [
-      buf({ author: "bob", content: "ambient" }, 30),
-      buf({ author: "alice", content: "@mention me", mentions_bot: true }, 5, "ping"),
+      bufAt({ author: "bob", content: "ambient" }, ANCHOR),
+      bufAt({ author: "alice", content: "@mention me", mentions_bot: true }, ANCHOR, "ping"),
     ],
     optsFollowUp,
   );
@@ -149,8 +172,8 @@ test("ping + channel mixed: ping section comes first", () => {
 test("multiple push pings: combined into one section", () => {
   const out = formatBatch(
     [
-      buf({ author: "alice", content: "first", mentions_bot: true }, 3, "ping"),
-      buf({ author: "bob", content: "second", mentions_bot: true }, 1, "ping"),
+      bufAt({ author: "alice", content: "first", mentions_bot: true }, ANCHOR, "ping"),
+      bufAt({ author: "bob", content: "second", mentions_bot: true }, ANCHOR, "ping"),
     ],
     optsPush,
   );
@@ -169,6 +192,16 @@ test("empty batch: empty string", () => {
 
 // ── Wrap helper ───────────────────────────────────────────────────────────
 
-test("wrapDisclaw wraps body in <disclaw>...</disclaw>", () => {
-  assert.equal(wrapDisclaw("hi"), "<disclaw>\nhi\n</disclaw>");
+test("wrapDisclaw: opens with <time> tag carrying YYYY-MM-DD HH:MM", () => {
+  assert.equal(
+    wrapDisclaw("hi", ANCHOR),
+    "<disclaw>\n<time>2026-05-12 20:54</time>\nhi\n</disclaw>",
+  );
+});
+
+test("wrapDisclaw: defaults `now` to Date.now() when omitted", () => {
+  // We can't pin exact wall time, but the output must start with the
+  // expected opener structure.
+  const out = wrapDisclaw("hi");
+  assert.match(out, /^<disclaw>\n<time>\d{4}-\d{2}-\d{2} \d{2}:\d{2}<\/time>\nhi\n<\/disclaw>$/);
 });

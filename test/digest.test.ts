@@ -86,7 +86,7 @@ test("formatDigest: single channel, single message", () => {
   const out = formatDigest([
     { channel_id: "C-A", channel: "help", server: "Server", count: 1, last_activity_ms: T0 },
   ]);
-  assert.equal(out, "[activity] #help: 1 msg since you last checked");
+  assert.equal(out, "[unread] #help: 1");
 });
 
 test("formatDigest: single server, multiple channels — no qualifier", () => {
@@ -94,7 +94,7 @@ test("formatDigest: single server, multiple channels — no qualifier", () => {
     { channel_id: "C-A", channel: "help", server: "Server", count: 3, last_activity_ms: T0 + 1000 },
     { channel_id: "C-B", channel: "random", server: "Server", count: 12, last_activity_ms: T0 },
   ]);
-  assert.equal(out, "[activity] #help: 3 msgs, #random: 12 msgs since you last checked");
+  assert.equal(out, "[unread] #help: 3, #random: 12");
 });
 
 test("formatDigest: multiple servers — qualifies each entry", () => {
@@ -103,8 +103,8 @@ test("formatDigest: multiple servers — qualifies each entry", () => {
     { channel_id: "C-B", channel: "general", server: "Server B", count: 5, last_activity_ms: T0 },
   ]);
   // Both have channel name "general" so qualification is essential
-  assert.match(out!, /Server A \/ #general: 2 msgs/);
-  assert.match(out!, /Server B \/ #general: 5 msgs/);
+  assert.match(out!, /Server A \/ #general: 2/);
+  assert.match(out!, /Server B \/ #general: 5/);
 });
 
 test("formatDigest: DM (no server) treated as its own bucket for qualification", () => {
@@ -113,6 +113,38 @@ test("formatDigest: DM (no server) treated as its own bucket for qualification",
     { channel_id: "DM-X", channel: "DM-with-alice", server: undefined, count: 1, last_activity_ms: T0 },
   ]);
   // DM should not get "Server / " prefix since it has no server; non-DM should be qualified.
-  assert.match(out!, /Server \/ #general: 2 msgs/);
-  assert.match(out!, /#DM-with-alice: 1 msg/);
+  assert.match(out!, /Server \/ #general: 2/);
+  assert.match(out!, /#DM-with-alice: 1/);
+});
+
+test("clear(channel_id): removes only that channel", () => {
+  const d = new DigestAccumulator();
+  d.note(ev({ channel_id: "C-A", channel: "help" }));
+  d.note(ev({ channel_id: "C-B", channel: "random" }));
+  assert.equal(d.clear("C-A"), 1);
+  const remaining = d.peek();
+  assert.equal(remaining.length, 1);
+  assert.equal(remaining[0]!.channel_id, "C-B");
+});
+
+test("clear(): removes all entries, returns count cleared", () => {
+  const d = new DigestAccumulator();
+  d.note(ev({ channel_id: "C-A", channel: "help" }));
+  d.note(ev({ channel_id: "C-B", channel: "random" }));
+  d.note(ev({ channel_id: "C-C", channel: "off-topic" }));
+  assert.equal(d.clear(), 3);
+  assert.equal(d.isEmpty(), true);
+});
+
+test("clear(unknown channel_id): returns 0, leaves digest intact", () => {
+  const d = new DigestAccumulator();
+  d.note(ev({ channel_id: "C-A", channel: "help" }));
+  assert.equal(d.clear("nonexistent"), 0);
+  assert.equal(d.peek().length, 1);
+});
+
+test("clear() on empty: returns 0", () => {
+  const d = new DigestAccumulator();
+  assert.equal(d.clear(), 0);
+  assert.equal(d.clear("any"), 0);
 });

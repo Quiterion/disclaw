@@ -61,6 +61,22 @@ export class DigestAccumulator {
     return out;
   }
 
+  /**
+   * Explicitly mark one channel (or all channels) as read. Used by
+   * `disclaw-ctl digest ack`: lets the agent dismiss the digest on
+   * intent rather than waiting for a flush to drain it. Returns the
+   * number of entries that were cleared (0 if the channel had no
+   * unread, or if the digest was already empty).
+   */
+  clear(channel_id?: string): number {
+    if (channel_id === undefined) {
+      const n = this.entries.size;
+      this.entries.clear();
+      return n;
+    }
+    return this.entries.delete(channel_id) ? 1 : 0;
+  }
+
   isEmpty(): boolean {
     return this.entries.size === 0;
   }
@@ -69,8 +85,8 @@ export class DigestAccumulator {
 /**
  * Format the digest tail line. Returns null if there's nothing to say.
  *
- * Compact one-liner per the design doc:
- *   "[activity] #help: 3 msgs, #random: 12 msgs since you last checked"
+ * Compact one-liner modeled on Discord's sidebar unread badges:
+ *   "[unread] #help: 3, #random: 12"
  *
  * If multiple servers are involved we qualify each entry; same-server
  * batches stay compact.
@@ -81,7 +97,7 @@ export function formatDigest(entries: DigestEntry[]): string | null {
   const qualify = servers.size > 1;
   const parts = entries.map((e) => {
     const channelLabel = qualify && e.server ? `${e.server} / #${e.channel}` : `#${e.channel}`;
-    return `${channelLabel}: ${e.count} ${e.count === 1 ? "msg" : "msgs"}`;
+    return `${channelLabel}: ${e.count}`;
   });
-  return `[activity] ${parts.join(", ")} since you last checked`;
+  return `[unread] ${parts.join(", ")}`;
 }

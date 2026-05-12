@@ -2,14 +2,26 @@
  * Formatting layer for buffered Discord events.
  *
  * Pure functions. Take a batch of events + the current time, return a
- * user-message body string. The daemon wraps the result in
- * `<disclaw>...</disclaw>` and sends via host.prompt/followUp/steer.
+ * user-message body string. `wrapDisclaw` then wraps in
+ * `<disclaw>...</disclaw>` with a `<time>` opener carrying the
+ * delivery wall-clock.
+ *
+ * Why wall-clock instead of relative ("Xs ago"):
+ *   Relative time is correct at the moment of delivery but rots —
+ *   reading turn N+20 in the transcript, "5s ago" still says 5s ago
+ *   even though the event is 47 minutes old. Wall-clock anchors the
+ *   timing to a specific point that stays correct forever.
+ *
+ * Why `(uid:<id>)` next to author name:
+ *   Inbound mention syntax is humanized to `@name` (discli patch), but
+ *   to *send* a mention the agent needs the wire form `<@user_id>`.
+ *   Surfacing the uid here means the agent has it in front of them
+ *   without an extra `disclaw-ctl history` round-trip.
  *
  * Design notes (from docs/dev/disclaw.md "Message format"):
  *   - Pings are emphasized; they appear before channel content in a batch
  *   - Channel content is grouped per channel (all events from #foo together)
  *   - Channel groups are sorted by recency (oldest at top, newest at bottom)
- *   - Relative timestamps are computed at flush time, not event capture time
  *   - Push pings: compact, truncated to ping_preview_length, with pointer
  *   - Follow_up pings: full content, dedicated framed block (room to breathe)
  *   - Single-event batches collapse to a one-liner
@@ -22,15 +34,28 @@ export interface BufferedEvent {
   arrivedAt: number; // ms epoch
 }
 
-export function wrapDisclaw(body: string): string {
-  return `<disclaw>\n${body}\n</disclaw>`;
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
 }
 
-export function formatRelativeTime(arrivedAt: number, now: number): string {
-  const ms = Math.max(0, now - arrivedAt);
-  if (ms < 60_000) return `${Math.round(ms / 1000)}s ago`;
-  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m ago`;
-  return `${(ms / 3_600_000).toFixed(1)}h ago`;
+/** "HH:MM" in local 24h format. */
+export function formatWallTime(ms: number): string {
+  const d = new Date(ms);
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+/** "YYYY-MM-DD HH:MM" in local 24h. Used by `<time>` opener tag. */
+export function formatTimeOpener(ms: number): string {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${formatWallTime(ms)}`;
+}
+
+/**
+ * Wrap a body in `<disclaw>...</disclaw>` with a `<time>` opener.
+ * `now` defaults to `Date.now()`; tests pass a fixed value.
+ */
+export function wrapDisclaw(body: string, now: number = Date.now()): string {
+  return `<disclaw>\n<time>${formatTimeOpener(now)}</time>\n${body}\n</disclaw>`;
 }
 
 function channelDescriptor(ev: DiscliMessageEvent): string {
@@ -38,7 +63,11 @@ function channelDescriptor(ev: DiscliMessageEvent): string {
   return ev.server ? `${ev.server} / #${ev.channel}` : `#${ev.channel}`;
 }
 
-function formatPingPushLine(e: BufferedEvent, now: number, previewLength: number): string {
+function authorTag(ev: DiscliMessageEvent, ms: number): string {
+  return `${ev.author} (${formatWallTime(ms)}) (uid:${ev.author_id})`;
+}
+
+function formatPingPushLine(e: BufferedEvent, previewLength: number): string {
   const where = channelDescriptor(e.ev);
   const trimmed =
     e.ev.content.length > previewLength
@@ -48,21 +77,19 @@ function formatPingPushLine(e: BufferedEvent, now: number, previewLength: number
     e.ev.content.length > previewLength
       ? ` (${e.ev.content.length} chars; full via \`disclaw-ctl history ${e.ev.channel_id} --from ${e.ev.timestamp}\`)`
       : "";
-  return `[ping] ${e.ev.author} (${formatRelativeTime(e.arrivedAt, now)}) in ${where}: "${trimmed}"${tail}`;
+  return `[ping] ${authorTag(e.ev, e.arrivedAt)} in ${where}: "${trimmed}"${tail}`;
 }
 
-function formatPingFollowUpBlock(e: BufferedEvent, now: number): string {
+function formatPingFollowUpBlock(e: BufferedEvent): string {
   const where = channelDescriptor(e.ev);
-  return `[ping] ${e.ev.author} (${formatRelativeTime(e.arrivedAt, now)}) mentioned you in ${where}:\n${e.ev.content}`;
+  return `[ping] ${authorTag(e.ev, e.arrivedAt)} mentioned you in ${where}:\n${e.ev.content}`;
 }
 
-function formatChannelLine(e: BufferedEvent, now: number): string {
-  return `${e.ev.author} (${formatRelativeTime(e.arrivedAt, now)}): ${e.ev.content}`;
+function formatChannelLine(e: BufferedEvent): string {
+  return `${authorTag(e.ev, e.arrivedAt)}: ${e.ev.content}`;
 }
 
 export interface FormatBatchOptions {
-  /** When the flush is firing — relative-time anchor. */
-  now: number;
   /** Push mode shows compact ping lines; follow_up shows full content blocks. */
   pingStyle: "push" | "follow_up";
   /** Truncation length for push pings. Ignored in follow_up. */
@@ -79,10 +106,10 @@ export function formatBatch(events: BufferedEvent[], opts: FormatBatchOptions): 
   // Pings first
   if (pings.length > 0) {
     if (opts.pingStyle === "push") {
-      const lines = pings.map((p) => formatPingPushLine(p, opts.now, opts.pingPreviewLength));
+      const lines = pings.map((p) => formatPingPushLine(p, opts.pingPreviewLength));
       sections.push(lines.join("\n"));
     } else {
-      const blocks = pings.map((p) => formatPingFollowUpBlock(p, opts.now));
+      const blocks = pings.map((p) => formatPingFollowUpBlock(p));
       sections.push(blocks.join("\n\n"));
     }
   }
@@ -104,11 +131,12 @@ export function formatBatch(events: BufferedEvent[], opts: FormatBatchOptions): 
     const first = group[0]!;
     const desc = channelDescriptor(first.ev);
     if (group.length === 1) {
-      sections.push(`[${desc}] ${formatChannelLine(first, opts.now)}`);
+      sections.push(`[${desc}] ${formatChannelLine(first)}`);
     } else {
-      const lastActivity = Math.max(...group.map((e) => e.arrivedAt));
-      const header = `[${desc} — last activity ${formatRelativeTime(lastActivity, opts.now)}]`;
-      const lines = group.map((e) => formatChannelLine(e, opts.now));
+      // Per-message wall-clock makes a "last activity" annotation
+      // redundant — the agent can see freshness in the lines themselves.
+      const header = `[${desc}]`;
+      const lines = group.map((e) => formatChannelLine(e));
       sections.push([header, ...lines].join("\n"));
     }
   }

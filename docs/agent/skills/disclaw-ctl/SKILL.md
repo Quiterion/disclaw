@@ -98,29 +98,55 @@ history if you decide to engage after the fact.
 disclaw-ctl send <channel_id> <content>       # send a message
 ```
 
+To **mention** (ping) someone, use Discord's wire-format:
+
+- `<@USER_ID>` — user mention (triggers a real notification)
+- `<@&ROLE_ID>` — role mention
+- `<#CHANNEL_ID>` — channel link (clickable, no notification)
+
+Plain `@username` is just text — Discord won't notify them. The user_id
+is surfaced as `(uid:...)` next to every author name in your incoming
+messages, so you usually have it in front of you when you need it. If
+not, `disclaw-ctl history <channel_id>` returns each message with its
+`author_id` field.
+
 ## How incoming messages are framed
 
-Messages reaching you are tagged by the *reason* they reached you, so
-you can tell at a glance whether to treat one as ambient context or as
-something directed at you:
+Every daemon-injected message is wrapped in `<disclaw>...</disclaw>`
+with a `<time>` opener carrying the delivery wall-clock — useful when
+re-reading older turns to know *when* something arrived (relative
+"Xs ago" framing would rot, wall-clock doesn't):
 
-- **`[ping] alice in #general (server-name): "..."`** — someone
-  mentioned you (or DM'd you). Came in via the ping path; ping-mode
-  setting determines whether it's pushy (steer between turns) or
-  patient (follow-up after current run).
-- **`[server-name / #general] alice: ...`** — ambient channel traffic
-  from a channel you've subscribed to. Came in as a follow-up after
-  your most recent run finished.
-- **`[activity] #help: 3 msgs, #random: 12 msgs since you last checked`** —
+```
+<disclaw>
+<time>2026-05-12 20:54</time>
+[Test Server / #general] alice (20:54) (uid:518777968508665866): hi
+</disclaw>
+```
+
+Inside the wrap, messages are tagged by the *reason* they reached you,
+so you can tell at a glance whether to treat one as ambient context or
+as something directed at you:
+
+- **`[ping] alice (20:54) (uid:...) in server / #general: "..."`** —
+  someone mentioned you (or DM'd you). Came in via the ping path;
+  ping-mode setting determines whether it's pushy (steer between
+  turns) or patient (follow-up after current run).
+- **`[server / #general] alice (20:54) (uid:...): ...`** — ambient
+  channel traffic from a channel you've subscribed to. Came in as a
+  follow-up after your most recent run finished.
+- **`[unread] #help: 3, #random: 12`** —
   the activity digest tail. Tells you which *unsubscribed* channels
   have had traffic since your last incoming message. Sidebar-style:
   counts only, no content. Resets every time it gets delivered.
 
-The `[ping]` prefix is the explicit "this is a notification for you,"
-the `[server / #channel] author:` prefix is "you're hearing this
-because you chose to lurk here," and `[activity]` is the
-glance-at-the-sidebar — channels you might want to look at but haven't
-opted into streaming.
+Per-line wall times use 24h local format (HH:MM). The `(uid:...)` is
+the author's Discord user_id — copy this into `<@uid>` if you want to
+reply with a real ping. The `[ping]` prefix is the explicit "this is a
+notification for you," the `[server / #channel] author:` prefix is
+"you're hearing this because you chose to lurk here," and `[unread]`
+is the glance-at-the-sidebar — channels you might want to look at but
+haven't opted into streaming.
 
 ## Discord — activity digest
 
@@ -132,6 +158,8 @@ flush. Modeled on Discord's sidebar unread badges: a way to notice
 disclaw-ctl set digest-mode follow_up   # auto-deliver: piggyback on next flush / nudge
 disclaw-ctl set digest-mode none        # off; query manually with `disclaw-ctl digest`
 disclaw-ctl digest                      # show what's currently accumulated (peek; doesn't reset)
+disclaw-ctl digest ack                  # mark all unread channels as read
+disclaw-ctl digest ack <channel_id>     # mark just one channel as read
 ```
 
 Subscribed-channel and ping traffic don't appear in the digest —
@@ -139,10 +167,13 @@ they're delivered through their own paths and counting them would be
 redundant. Only ambient activity in channels you're *not* listening to
 shows up here.
 
-The counter resets when it gets delivered (drained into a flush tail
-or nudge). Reading history of a channel does *not* reset its count —
-inspection and the digest are kept independent so calling `history`
-doesn't have surprising side-effects.
+The counter clears two ways: implicitly when it gets delivered
+(drained into a flush tail or nudge), or explicitly via `digest ack`.
+Reading history of a channel does *not* clear its count — inspection
+and the digest are kept independent, so peeking at the digest, calling
+`history` to scroll back, or any other read action has no side
+effects. If you've decided you're caught up on a channel, `digest ack`
+is the verb that says so.
 
 ## Idle nudges + sleep
 

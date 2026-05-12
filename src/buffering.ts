@@ -89,7 +89,6 @@ export class BufferManager {
     const events = this.buffers[kind].splice(0);
     if (events.length === 0) return;
     const body = formatBatch(events, {
-      now: Date.now(),
       pingStyle: kind === "push" ? "push" : "follow_up",
       pingPreviewLength: this.pingPreviewLength,
     });
