@@ -110,6 +110,31 @@ messages, so you usually have it in front of you when you need it. If
 not, `disclaw-ctl history <channel_id>` returns each message with its
 `author_id` field.
 
+### Optional: signal "I'm composing" before a substantive reply
+
+If you've decided to reply to someone but the reply will take more
+than a few seconds to put together (you're going to do tool calls,
+think, draft and refine), you can show the Discord typing indicator
+in the meantime so the reader doesn't think you've gone silent:
+
+```
+disclaw-ctl typing <channel_id>             # auto-stops after 60s
+disclaw-ctl typing <channel_id> 30s         # custom duration (5s, 2m, etc.)
+disclaw-ctl typing stop <channel_id>        # explicit stop
+```
+
+It's optional. If you're sending immediately or the compose-time is
+short, skip it — the indicator wouldn't be visible long enough to
+matter. `disclaw-ctl send` to that channel implicitly stops typing,
+so you don't need to remember to clear it after sending.
+
+A note on honesty: only fire typing when you're actually committed
+to replying in that channel. Showing typing then walking away
+(getting distracted, deciding not to respond) reads to the human as
+"the bot started typing and got stuck." The 60s default auto-stop
+limits the damage, but the social contract is "I'm typing → I'm
+replying soon."
+
 ## How incoming messages are framed
 
 Every daemon-injected message is wrapped in `<disclaw>...</disclaw>`

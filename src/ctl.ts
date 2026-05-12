@@ -56,6 +56,10 @@ Discord — talk:
                                                     (lighter for conversational use)
   disclaw-ctl history <channel_id> [limit]  read recent messages from a channel
   disclaw-ctl channels                      list channels visible to the bot
+  disclaw-ctl typing <channel_id> [dur]     show "is typing…" in a channel
+                                            (auto-stops after dur, default 60s;
+                                             also implicitly stops on send)
+  disclaw-ctl typing stop <channel_id>      explicit stop
 
 Idle nudges + sleep (your relationship with your own attention):
   disclaw-ctl set idle-nudge-timeout <dur>  e.g. 30s, 5m, 1h, off — how long after
@@ -249,6 +253,33 @@ function parseArgs(argv: string[]): CtlRequest {
     case "channels": {
       const guild_id = rest[0];
       return { cmd: "discord-channels", req_id: reqId, guild_id };
+    }
+
+    case "typing": {
+      // disclaw-ctl typing <channel_id>             → start, default auto-stop
+      // disclaw-ctl typing <channel_id> <duration>  → start, auto-stop after duration
+      // disclaw-ctl typing stop <channel_id>        → explicit stop
+      if (rest[0] === "stop") {
+        const channel_id = rest[1];
+        if (!channel_id) die("usage: disclaw-ctl typing stop <channel_id>");
+        return { cmd: "discord-typing-stop", req_id: reqId, channel_id };
+      }
+      const channel_id = rest[0];
+      if (!channel_id) {
+        die("usage: disclaw-ctl typing <channel_id> [duration]  OR  disclaw-ctl typing stop <channel_id>");
+      }
+      const durArg = rest[1];
+      let duration_ms: number | undefined;
+      if (durArg !== undefined) {
+        try {
+          const parsed = parseDuration(durArg);
+          if (parsed === null) die("typing duration cannot be 'off' — use `disclaw-ctl typing stop <channel_id>` instead");
+          duration_ms = parsed;
+        } catch (err: any) {
+          die(err?.message ?? String(err));
+        }
+      }
+      return { cmd: "discord-typing-start", req_id: reqId, channel_id, ...(duration_ms !== undefined ? { duration_ms } : {}) };
     }
 
     case "prompt":

@@ -32,6 +32,8 @@ export type CtlRequest =
   | { cmd: "discord-send"; req_id: string; channel_id: string; content: string }
   | { cmd: "discord-history"; req_id: string; channel_id: string; limit?: number }
   | { cmd: "discord-channels"; req_id: string; guild_id?: string }
+  | { cmd: "discord-typing-start"; req_id: string; channel_id: string; duration_ms?: number }
+  | { cmd: "discord-typing-stop"; req_id: string; channel_id: string }
   | { cmd: "set-idle-nudge-timeout"; req_id: string; timeout_ms: number | null }
   | { cmd: "set-digest-mode"; req_id: string; mode: DigestMode }
   | { cmd: "digest"; req_id: string }

@@ -291,6 +291,29 @@ async function main(): Promise<void> {
     },
   });
 
+  // ── Typing indicators ───────────────────────────────────────────────
+  // Per-channel auto-stop timers. Discli's typing_start kicks off a
+  // background loop that refreshes typing every ~5s; without us
+  // calling typing_stop it runs forever. Default 60s auto-stop on
+  // typing-start protects against the agent forgetting to clear, and
+  // discord-send does an implicit clear for "they sent the message,
+  // typing is now noise."
+  const typingTimers = new Map<string, NodeJS.Timeout>();
+
+  function clearTypingTimer(channel_id: string): void {
+    const t = typingTimers.get(channel_id);
+    if (t) {
+      clearTimeout(t);
+      typingTimers.delete(channel_id);
+    }
+  }
+
+  async function stopTyping(channel_id: string): Promise<void> {
+    clearTypingTimer(channel_id);
+    if (!discli) return;
+    await discli.sendAction({ action: "typing_stop", channel_id });
+  }
+
   // ── Control plane ───────────────────────────────────────────────────
   const handler = async (req: CtlRequest): Promise<CtlResponse> => {
     log(`[ctl] ${req.cmd} req_id=${req.req_id}`);
@@ -492,7 +515,37 @@ async function main(): Promise<void> {
           channel_id: req.channel_id,
           content: req.content,
         });
+        // Implicit typing-stop: if the agent had typing active for this
+        // channel, sending makes it redundant (and the agent shouldn't
+        // have to remember to clear it). Clears any auto-stop timer too.
+        stopTyping(req.channel_id).catch(() => { /* best effort */ });
         return { req_id: req.req_id, ok: true, result };
+      }
+
+      case "discord-typing-start": {
+        if (!discli) return discordUnavailable(req.req_id);
+        await discli.sendAction({
+          action: "typing_start",
+          channel_id: req.channel_id,
+        });
+        // Schedule auto-stop. Default 60s if duration not specified.
+        // Replace any existing timer (latest call wins).
+        const ms = req.duration_ms ?? 60_000;
+        clearTypingTimer(req.channel_id);
+        typingTimers.set(
+          req.channel_id,
+          setTimeout(() => {
+            typingTimers.delete(req.channel_id);
+            stopTyping(req.channel_id).catch(() => {});
+          }, ms),
+        );
+        return { req_id: req.req_id, ok: true, result: { duration_ms: ms } };
+      }
+
+      case "discord-typing-stop": {
+        if (!discli) return discordUnavailable(req.req_id);
+        await stopTyping(req.channel_id);
+        return { req_id: req.req_id, ok: true };
       }
 
       case "discord-history": {
