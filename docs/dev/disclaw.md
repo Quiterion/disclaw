@@ -308,74 +308,95 @@ restarts is a future concern; tracked in "Out of scope".)
 
 ## Message format
 
-Format depends on whether the user message is a normal delivery (`follow_up`,
-`prompt`, or idle nudge) or a `push` between-turn injection. Timestamps are
-always computed *at flush time*, not event-capture time.
+Every daemon-injected user message is wrapped in `<disclaw>...</disclaw>`
+with a `<time>` opener carrying the wall-clock when the delivery
+happened. Inside the wrap, each section uses its own XML tag so
+boundaries are parser-unambiguous (no convention-only delimiters
+between channels, pings, the digest tail, or attachments) and so
+reading older turns doesn't suffer from "Xs ago" times that have
+silently rotted.
 
-### Normal delivery (follow_up / prompt / idle nudge)
+Wall times are 24h local format (HH:MM). The wrap-level `<time>` tag
+gives the date and overall delivery time; per-line times within
+`<channel>` and per-`<ping>` `at="..."` attributes are the same wall
+clock for individual events.
 
-Plain prose, framed per channel:
-
-```
-[#general — last activity 12s ago]
-alice (4m ago): hey opus, you around?
-bob (3m ago): I think they're afk
-alice (12s ago): 👋
-```
-
-Single-message batches collapse:
+### Anatomy
 
 ```
-[#general] alice (12s ago): just dropped a draft in #docs
+<disclaw>
+<time>2026-05-12 20:54</time>
+
+<ping author="alice" uid="518777968508665866" server="quiterion's server" channel="#off-topic" at="20:54" id="1503...">
+hey opus, can you take a look at this?
+<attachment filename="bug.png" size="98765" url="https://cdn.discordapp.com/.../bug.png"/>
+</ping>
+
+<channel server="quiterion's server" name="#general">
+alice (20:50): hey, around?
+bob (20:51): I think they're afk
+alice (20:54): 👋
+</channel>
+
+<digest>[unread] #help: 3, #random: 12</digest>
+</disclaw>
 ```
 
-Pings get their own framed block — full content, not truncated, since
-there's room to breathe in a dedicated user message:
+**Section tags:**
+
+- **`<ping>`** — direct mention or DM. Attributes carry author display
+  name, `uid` (for `<@uid>` reply syntax), `server`/`channel` (or
+  `dm="true"` for DMs), `at` (wall time), and `id` (message_id, used
+  for reactions / replies). Body is the full message content. Always
+  appears before any `<channel>` blocks in the same flush.
+- **`<channel>`** — ambient channel traffic from a subscribed channel.
+  Attributes: `server` and `name`. Body is one line per message:
+  `author (HH:MM): content`. No uid per line — the agent uses
+  `disclaw-ctl whois <name>` to resolve a name they saw here. Multiple
+  channels in one flush each get their own `<channel>` tag, sorted
+  by last-activity (oldest first, freshest closest to the agent's
+  reply position).
+- **`<attachment filename size url />`** — Discord file attachment.
+  Self-closing tag on the line after the message it belongs to,
+  inside either a `<ping>` or `<channel>` body. Multiple attachments
+  per message each get their own line.
+- **`<digest>`** — activity digest tail. Counts of *unsubscribed*
+  channels with new messages since the last drain (delivery, idle
+  nudge, or explicit `disclaw-ctl digest ack`). Compact `[unread]
+  #foo: N, #bar: M` form inside the tag. Always at the end of the
+  wrap.
+
+XML attribute values are escaped (`"` → `&quot;`, `&` → `&amp;`,
+`<` → `&lt;`, `>` → `&gt;`) so weird Discord names don't break
+parsing.
+
+### Push vs follow_up framing
+
+Pings arriving via `push` mode (steered between turns of an
+in-flight agent run) use the same `<ping>` tag, with the body
+truncated to `pingPreviewLength` (default ~150 chars) and a pointer
+appended for retrieval:
 
 ```
-[ping] charlie (3s ago) mentioned you in #random:
-"hey opus, can you take a look at this?"
+<ping author="alice" uid="..." server="..." channel="#random" at="20:54" id="...">
+hey opus, can you take a look at thi…
+(180 chars; full via `disclaw-ctl history #random --from <ts>`)
+</ping>
 ```
 
-Activity digest, when piggybacking, appears as a compact tail:
+Follow_up pings are full content, no truncation (separate user
+message after the run, no pressure on length).
 
-```
-[activity] #help: 3 msgs, #random: 12 msgs since you last checked
-```
+### Inbound mention humanization
 
-Multiple events from the same flush concatenate under their respective
-frames within one user message.
-
-### Push delivery (mid-run ping injection)
-
-`push` mode pings are injected via pi's `steer` mechanism. Verified against
-`agent-loop.ts:runLoop`: a steered message is queued, then prepended via
-`message_start`/`message_end` events at the *start of the next inner-loop
-iteration* (after a `turn_end`), before the next `streamAssistantResponse()`.
-So the steered content arrives as a **separate user message between turns**
-— same delivery channel as `follow_up`, just different timing. It is *not*
-embedded inside a tool result.
-
-That makes the format very simple: same `[ping]` framing as a follow_up
-ping, but with truncation + pointer to full content (since push fires
-between turns of work that may still be ongoing, brevity matters):
-
-```
-[ping] alice (3s ago) in #random: "hey opus, can you take a look at thi…"
-       (150 chars; full message via `disclaw-ctl history #random --from <ts>`)
-```
-
-Multiple pings within the push debounce window batch into one user message:
-
-```
-[ping] alice (3s ago) in #random: "hey opus, can you take a look at thi…"
-[ping] bob (1s ago) in #docs: "wait nevermind, found it"
-       (view full via `disclaw-ctl history --from <ts>`)
-```
-
-Short messages (≤ ping-preview-length) aren't truncated; the `(N chars; full
-via …)` tail only appears when content was actually cut. Truncation length
-defaults to ~150 chars, configurable via `disclaw-ctl set ping-preview-length`.
+Discord's wire format embeds user/role/channel mentions as
+`<@user_id>` / `<@&role_id>` / `<#channel_id>`. discli's
+`humanize_mentions` (local patch on the disclaw-patches branch)
+substitutes these to `@display_name` / `@role_name` / `#channel_name`
+before the daemon ever sees the event, so message content reads
+naturally. The `uid` attribute on `<ping>` carries the original
+user_id so the agent can construct a wire-format mention back when
+they want to ping someone.
 
 ---
 
@@ -593,106 +614,147 @@ This section's shape changed twice during workshopping:
 
 ## State
 
-| item | persisted | survives router restart |
+`state.json` lives at `$DISCLAW_RUNTIME_DIR/state.json` (default
+`~/.disclaw/state.json`). Atomic writes via temp+rename.
+
+| item | persisted | survives daemon restart |
 |---|---|---|
-| `subscriptions` (set of channel_ids) | yes | yes |
-| `ping_mode` (push/follow_up/none) | yes | yes |
-| `digest_mode` (follow_up/none) | yes | yes |
-| `idle_nudge_timeout` (seconds) | yes | yes |
-| `ping_preview_length` (chars) | yes | yes |
-| `sysprompt` (str, also mirrored to `/home/claude-sandbox/.disclaw/sysprompt.txt`) | yes | yes |
-| `initialized` (bool — has first-run setup happened) | yes | yes |
-| `discli_offset` (byte offset into log) | yes (saved *after successful flush*, not after read) | yes — buffered-but-unflushed events re-appear |
-| `/home/claude-sandbox/missed-pings.log` (file) | yes (its own file, not in state.json) | yes |
-| event buffers + digest accumulator | no (in-memory) | replayed from discli on restart |
-| sleep state (active until: timestamp / "next event") | no (in-memory) | implicit reset — startup is "not sleeping" |
-| `agent.isStreaming` / `isCompacting` | no | implicit reset — fresh Agent on daemon start |
+| `initialized` (bool — first-run flag) | yes | yes |
+| `subscriptions` (channel_id[]) | yes | yes |
+| `ping_mode` ({push,follow_up,none}) | yes | yes |
+| `digest_mode` ({follow_up,none}) | yes | yes |
+| `idle_nudge_timeout_ms` (number\|null) | yes | yes |
+| `sysprompt` (str, mirrored to `$RUNTIME_DIR/sysprompt.txt` for the pi extension) | yes | yes |
+| `last_session_file` (path the daemon last observed pi writing to) | yes | yes — drives `--session` resume on next start |
+| `provider` / `model` / `model_name` (deploy-config) | yes | yes — fallback for `start.sh` when env isn't set |
+| `$RUNTIME_DIR/missed-pings.log` (JSONL, append-only) | yes (its own file) | yes |
+| event buffers + digest accumulator | no (in-memory) | lost on restart |
+| sleep state (`{until_ms, expiryTimer}` or null) | no (in-memory) | implicit reset — daemon starts not-sleeping |
+| typing auto-stop timers (per-channel) | no (in-memory) | discli's typing loops also die on daemon exit |
+| `host.alive` / `host.exit` (pi process status) | no | reset on each daemon launch |
 
-Persisting the discli offset only on flush means a daemon crash loses zero
-events: anything not yet delivered to the Agent will be re-read on restart.
-Re-delivery is safe because the previous run had not yet been consumed by
-the Agent's loop.
+Session resume mechanism:
 
-Slice 2.5 simplification: the daemon does not yet persist the Agent's
-*transcript* across restarts. Restarting the daemon = fresh Agent with
-the persisted sysprompt loaded, but no recollection of prior runs.
-Persisting the transcript is on the slice-4+ list (see "Context management").
+1. After every `agent_end`, daemon RPCs pi `get_state` and reads
+   `sessionFile`. If the file exists on disk and differs from
+   `last_session_file`, daemon updates state.json.
+2. On daemon start, if `last_session_file` is set and the file
+   exists, daemon passes `--session <path>` to pi. Pi resumes the
+   transcript.
+3. If the path is missing or null, pi starts fresh.
+
+Resilience: tier 1 — pi process exit is detected and surfaced
+(`pi.alive: false` in `get-state`, loud `[error]` in daemon log,
+buffer dispatches log `[drop]` with size). No automatic respawn yet
+(tier 2). No corrupt-session fallback (tier 3). Operator restarts the
+daemon to recover.
 
 ---
 
-## pi-agent-core API surface used
+## Pi RPC surface (subprocess)
 
-The daemon embeds an `Agent` from `@earendil-works/pi-agent-core` and
-talks to it via direct method calls (no JSONL, no subprocess):
+Slice 3.5 reverted the embedded-Agent approach in favor of spawning
+pi-coding-agent as a subprocess (`pi --mode rpc`) wrapped by
+`AgentHost` / `PiProcess`. Communication is JSONL over stdio. This
+gives us pi-acm context management, session-file persistence, and the
+full pi tool catalog (read/write/edit/grep/bash) without re-implementing
+any of it.
 
-| call | direction | when |
+| RPC | direction | when |
 |---|---|---|
-| `agent.prompt(message)` | host → agent | flush when agent is idle (starts a new agent run) |
-| `agent.followUp(message)` | host → agent | flush while the current run is in flight; injected as a user message after the run would have ended (extends the same run) |
-| `agent.steer(message)` | host → agent | `push`-mode delivery during the current run; injected as a user message at the next inter-turn boundary |
-| `agent.subscribe(handler)` | agent → host | continuous; drives `isStreaming`, surfaces `tool_execution_*` and message events to the daemon's logger |
-| `agent.state.systemPrompt = ...` | host → agent | refreshed before every `prompt()` from current floor + slot |
-| `agent.abort()` / `agent.waitForIdle()` | host → agent | shutdown hooks |
+| `prompt` | daemon → pi | flush when pi is idle (starts a new agent run) |
+| `follow_up` | daemon → pi | flush while a run is in flight; queued for after the run would have ended (extends it) |
+| `steer` | daemon → pi | `push`-mode delivery during the current run; injected at the next inter-turn boundary |
+| `abort` | daemon → pi | shutdown |
+| `get_state` | daemon → pi | sessionFile + messageCount + pendingMessageCount; called after each `agent_end` to track session rotation |
 
-Events emitted but currently used only for logging (slice 3+): `turn_*`,
-`message_*`, `tool_execution_*`. The daemon doesn't surface any of these
-to the agent — they're agent-internal.
+Pi events the daemon listens to (forwarded from PiProcess via
+AgentHost):
 
-Not yet wired (deferred): `transformContext` (sliding-window context
-management — see "Context management"), `beforeToolCall` /
-`afterToolCall` (no need yet), `streamFn` override (default is fine),
-session persistence (transcript file is the planned solution).
+- `agent_start` / `agent_end` — drive `host.isStreaming` and the
+  buffer's follow_up flush trigger
+- `auto_retry_start` / `auto_retry_end` — surfaced in daemon log so
+  errored / retried turns are visible (was added after a 5-min
+  "terminated" turn looked like normal streaming)
+- `message_end` with `stopReason ∈ {error, aborted}` — surfaced as
+  `[error]` instead of generic `[event]`
+- `exit` — sets `host.alive = false`, daemon logs and ctl
+  buffer-dispatch refuses with `[drop]` instead of silent black-hole
+  (tier 1 resilience)
+
+System-prompt control: pi's default coding-assistant sysprompt is
+*replaced* (not appended to) by the `.pi/extensions/sysprompt/`
+extension, which composes the model-derived floor + the agent-managed
+slot read from `$RUNTIME_DIR/sysprompt.txt`.
 
 ---
 
 ## Agent tool surface
 
-### MVP (v1): bash to `disclaw-ctl`
+The agent uses pi's existing `bash` tool to invoke `disclaw-ctl`. No
+native AgentTool wrapper layer — the bash-to-CLI surface is what
+shipped, the testing instances haven't surfaced friction with it that
+would justify a parallel typed tool layer. (Considered + dropped; see
+"Out of scope".)
 
-The agent uses pi's existing `bash` tool to invoke `disclaw-ctl`:
+Wherever a `<channel_id>` argument appears below, `#name` form also
+works (resolves via discli's per-guild channel cache; first match wins
+on cross-guild collision). Subscribe/unsubscribe are intentional
+exceptions — those store IDs for routing-side matching, and a
+recurring name-resolution mismatch would be much worse than a one-shot
+send to the wrong channel.
 
 ```
-disclaw-ctl subscribe <channel_id>
+# Subscriptions (numeric channel_id only)
+disclaw-ctl subscribe   <channel_id>
 disclaw-ctl unsubscribe <channel_id>
 disclaw-ctl list
 
+# Modes
 disclaw-ctl set ping-mode {push|follow_up|none}
-disclaw-ctl set ping-preview-length <chars>        # truncation for push pings; default ~150
 disclaw-ctl set digest-mode {follow_up|none}
-disclaw-ctl set idle-nudge-timeout <duration>      # e.g. 60s, 5m
+disclaw-ctl set idle-nudge-timeout <duration>     # e.g. 60s, 5m, off
 
-disclaw-ctl sysprompt                              # show current sysprompt slot
-disclaw-ctl sysprompt set "<text>"                 # set inline
-disclaw-ctl sysprompt set --stdin                  # read from stdin (cat file | ...)
-disclaw-ctl sysprompt clear                        # remove
+# Sysprompt slot
+disclaw-ctl sysprompt                             # show
+disclaw-ctl sysprompt set "<text>"
+disclaw-ctl sysprompt set --stdin                 # heredoc / pipe
+disclaw-ctl sysprompt clear
 
-disclaw-ctl sleep [duration]                       # bare = until next event
-disclaw-ctl missed-pings                           # show missed-pings log
-disclaw-ctl digest                                 # show current activity digest on demand
+# Sleep / wake
+disclaw-ctl sleep [duration]                      # bare = until next event
+disclaw-ctl wake
 
-disclaw-ctl send <channel_id> <content>            # delegates to discli
-disclaw-ctl history <channel_id> [n | --from <ts>]  # delegates to discli
-disclaw-ctl channels                                # list known channels
+# Activity digest
+disclaw-ctl digest                                # peek (non-destructive)
+disclaw-ctl digest ack                            # mark all unread channels read
+disclaw-ctl digest ack <channel_id>               # mark one channel read
+
+# Missed pings (log of pings dropped while ping-mode = none)
+disclaw-ctl missed-pings                          # all
+disclaw-ctl missed-pings <N>                      # last N
+disclaw-ctl missed-pings clear                    # wipe
+
+# Discord I/O
+disclaw-ctl send <channel_id> <content>           # send a message
+disclaw-ctl send --quiet <channel_id> <content>   # print just the jump URL on success
+disclaw-ctl send <channel_id> --stdin             # heredoc / pipe (multi-line, escaping-friendly)
+disclaw-ctl history <channel_id> [limit]          # JSON list of recent messages
+disclaw-ctl channels                              # list channels visible to the bot
+disclaw-ctl whois <name> [--guild <id>]           # name → user_id matches
+disclaw-ctl react   <channel_id> <message_id> <emoji>
+disclaw-ctl unreact <channel_id> <message_id> <emoji>
+disclaw-ctl typing <channel_id> [duration]        # default auto-stop 60s; implicit stop on send
+disclaw-ctl typing stop <channel_id>
+
+# Health
+disclaw-ctl ping
+disclaw-ctl get-state                             # full daemon + pi + router state
 ```
 
-Discord I/O (`send`, `history`, `channels`) is implemented in `disclaw-ctl`
-as a thin shim over `discli`. Routing it through the same control plane
-keeps the agent-facing surface single-rooted.
-
-Context management commands (sliding window, pinning, recall) are TBD —
-to be added when we implement `Agent.transformContext`-based context
-management. They'll likely live alongside the rest as `disclaw-ctl
-acm-*` subcommands or as agent-callable tools registered with the Agent
-directly. See "Context management".
-
-### v2: native Agent tools (alongside bash)
-
-`disclaw-ctl` is the bootstrap surface — convenient for slice 3 because
-the agent can use it the same way they use any other shell command.
-Once the surface is stable, we can also register `discord_subscribe`,
-`discord_send`, `discord_history`, etc. as proper `AgentTool`s alongside
-bash. The agent gets typed tool calls instead of bash invocations; the
-underlying daemon logic is the same.
+`SKILL.md` (in `docs/agent/skills/disclaw-ctl/`) is the canonical
+agent-facing reference — read that before the design doc. This list
+is for human readers wanting a quick inventory.
 
 ---
 
