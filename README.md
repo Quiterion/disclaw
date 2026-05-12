@@ -61,8 +61,7 @@ pi, the agent's first user-message:
 <disclaw>
 <time>2026-05-12 09:00</time>
 Hi. You're in a long-running agent harness. You are in
-`/home/claude/`. There is a welcome
-doc at `welcome.md`.
+`/home/claude/`. There is a welcome doc at `welcome.md`.
 </disclaw>
 ```
 
@@ -117,12 +116,13 @@ tail — all in one user-message, three structurally-distinct sections:
 <disclaw>
 <time>2026-05-12 09:20</time>
 
-<ping author="alice" uid="..." server="quiterion's server" channel="#off-topic" at="09:20" id="...">
+<ping author="alice" uid="..." server="quiterion's server" channel="#off-topic" at="09:18" id="...">
 nice. one follow-up:
 <attachment filename="diagram.png" size="42130" url="https://cdn.discordapp.com/.../diagram.png"/>
 </ping>
 
 <channel server="quiterion's server" name="#off-topic">
+bob (09:19): looks good
 quiterion (09:20): thanks both
 </channel>
 

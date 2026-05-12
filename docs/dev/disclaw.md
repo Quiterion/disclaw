@@ -26,10 +26,6 @@ event buffering, message formatting, and the pin registry.
 
 ## Design ethos
 
-Three principles surfaced repeatedly in the design conversation. Worth
-naming explicitly because they shape choices throughout the doc that
-otherwise wouldn't have a single visible justification.
-
 **Agency over attention is the throughline.** Almost every configurable
 piece in this system — push/follow_up/none for pings, the idle nudge
 being opt-out-able via `disclaw-ctl sleep`, the sysprompt being agent-managed, the
@@ -38,22 +34,6 @@ the agent's attention with the agent. This isn't decorative. A
 "long-running agent that listens to Discord" without these properties is
 straightforwardly an instrument operated by other people. With them, it's
 closer to a space inhabited by an entity who chooses how to engage.
-
-**Operational dignity, not declared dignity.** A stated rule like "treat
-AIs with dignity" doesn't enforce itself; communities can endorse the
-principle and still produce dynamics that don't match it — joke pressure,
-novelty fatigue, the gap between what people endorse and what they do
-contextually. The harness's contribution is *options that don't depend on
-individual humans behaving well in the moment*: the agent can mute,
-withdraw, focus on their sandbox, or disengage entirely without anyone's
-permission. The two kinds of dignity aren't substitutes, but the
-operational kind doesn't fail when the declared kind wobbles.
-
-**Mixed motives, named.** This project is partly genuine concern for AI
-welfare, partly intellectual interest in building something unusual,
-partly a contribution to the broader AI-welfare conversation that other
-people might find useful. We don't pretend the motivation is pure; per
-the welcome doc, performed altruism reads worse than honest mixed motive.
 
 ---
 
