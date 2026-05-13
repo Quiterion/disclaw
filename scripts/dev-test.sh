@@ -68,8 +68,13 @@ echo "      $REPO_DIR/bin/pi-discord-ctl get-state"
 echo
 
 cd "$TEST_DIR"
+# PI_DISCORD_RUNTIME_DIR is passed to pi-host too — not because pi-host
+# uses it, but so it ends up in the agent's env (pi inherits pi-host's
+# env). Without this, pi-discord-ctl invocations from the agent's bash
+# fall through to the default socket and miss the isolated test runtime.
 exec env \
   PI_HOST_MODEL=claude-opus-4-7 \
   PI_HOST_MODEL_NAME="Claude Opus 4.7" \
   PI_HOST_RUNTIME_DIR="$PI_HOST_RT" \
+  PI_DISCORD_RUNTIME_DIR="$PI_DISCORD_RT" \
   node --env-file="$REPO_DIR/.env" "$REPO_DIR/packages/pi-host/dist/daemon.js"
