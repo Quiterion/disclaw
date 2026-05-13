@@ -116,6 +116,12 @@ cat /tmp/draft.md | pi-discord-ctl send #general --stdin
 `--quiet` skips the JSON wrapper on success and prints just the jump
 URL — lighter for back-and-forth conversational use.
 
+**Length limit:** Discord caps messages at **2000 characters**.
+`pi-discord-ctl send` pre-checks and returns a clear error if you
+exceed it — split into multiple sends or trim. No auto-chunking
+flag yet. For drafts longer than that, you can compose in a file
+and pipe through `--stdin` to confirm length with `wc -c` first.
+
 To **mention** (ping) someone, use Discord's wire format:
 
 - `<@USER_ID>` — user mention (triggers a real notification)

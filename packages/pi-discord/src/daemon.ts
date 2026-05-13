@@ -347,6 +347,19 @@ async function main(): Promise<void> {
 
       case "send": {
         if (!discli) return discordUnavailable(req.req_id);
+        // Pre-check Discord's 2000-char message limit so we return a
+        // structured error rather than discli's pass-through 400
+        // from the API. The agent reads the error; surfacing the
+        // count + the limit + the hint to split saves a head-scratch.
+        if (req.content.length > 2000) {
+          return {
+            req_id: req.req_id,
+            ok: false,
+            error:
+              `content is ${req.content.length} chars; Discord's per-message limit is 2000. ` +
+              `Split into multiple \`send\` calls or trim. There's no auto-chunking flag yet.`,
+          };
+        }
         const result = await discli.sendAction({
           action: "send",
           channel_id: req.channel_id,
