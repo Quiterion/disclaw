@@ -19,13 +19,15 @@ import { existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
-import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.js";
+import { attachJsonlLineReader, serializeJsonLine } from "pi-shared/jsonl";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = resolve(__dirname, "..");
+// dist/discli-io.js → packages/pi-discord/dist/ → packages/pi-discord/ → workspace root
+const PKG_ROOT = resolve(__dirname, "..");
+const WORKSPACE_ROOT = resolve(PKG_ROOT, "..", "..");
 
-/** Default to the project-local venv binary. Overridable via env. */
-const DEFAULT_DISCLI_BIN = resolve(REPO_ROOT, ".venv/bin/discli");
+/** Default to the workspace-level venv binary. Overridable via env. */
+const DEFAULT_DISCLI_BIN = resolve(WORKSPACE_ROOT, ".venv/bin/discli");
 
 export interface DiscliProcessOptions {
   /** Path to the discli executable. Defaults to .venv/bin/discli. */
@@ -61,7 +63,7 @@ export class DiscliProcess extends EventEmitter {
       throw new Error(
         `discli binary not found at ${this.bin}. ` +
           `Run \`python3 -m venv .venv && .venv/bin/pip install -e third_party/discli\`, ` +
-          `or set DISCLAW_DISCLI_BIN to a different location.`,
+          `or set PI_DISCORD_DISCLI_BIN to a different location.`,
       );
     }
 

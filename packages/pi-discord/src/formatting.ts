@@ -2,8 +2,8 @@
  * Formatting layer for buffered Discord events.
  *
  * Pure functions. Take a batch of events + the current time, return a
- * user-message body string. `wrapDisclaw` then wraps in
- * `<disclaw>...</disclaw>` with a `<time>` opener carrying the
+ * user-message body string. `wrapDiscord` then wraps in
+ * `<discord>...</discord>` with a `<time>` opener carrying the
  * delivery wall-clock.
  *
  * Why wall-clock instead of relative ("Xs ago"):
@@ -12,18 +12,18 @@
  *   even though the event is 47 minutes old. Wall-clock anchors the
  *   timing to a specific point that stays correct forever.
  *
- * Why `(uid:<id>)` next to author name:
+ * Why `uid="..."` next to author name:
  *   Inbound mention syntax is humanized to `@name` (discli patch), but
  *   to *send* a mention the agent needs the wire form `<@user_id>`.
  *   Surfacing the uid here means the agent has it in front of them
- *   without an extra `disclaw-ctl history` round-trip.
+ *   without an extra `pi-discord-ctl history` round-trip.
  *
- * Design notes (from docs/dev/disclaw.md "Message format"):
+ * Layout:
  *   - Pings are emphasized; they appear before channel content in a batch
  *   - Channel content is grouped per channel (all events from #foo together)
  *   - Channel groups are sorted by recency (oldest at top, newest at bottom)
- *   - Push pings: compact, truncated to ping_preview_length, with pointer
- *   - Follow_up pings: full content, dedicated framed block (room to breathe)
+ *   - Push pings: compact, truncated to pingPreviewLength, with pointer
+ *   - Follow-up pings: full content, dedicated framed block
  *   - Single-event batches collapse to a one-liner
  */
 import type { DiscliMessageEvent } from "./routing.js";
@@ -51,11 +51,11 @@ export function formatTimeOpener(ms: number): string {
 }
 
 /**
- * Wrap a body in `<disclaw>...</disclaw>` with a `<time>` opener.
+ * Wrap a body in `<discord>...</discord>` with a `<time>` opener.
  * `now` defaults to `Date.now()`; tests pass a fixed value.
  */
-export function wrapDisclaw(body: string, now: number = Date.now()): string {
-  return `<disclaw>\n<time>${formatTimeOpener(now)}</time>\n${body}\n</disclaw>`;
+export function wrapDiscord(body: string, now: number = Date.now()): string {
+  return `<discord>\n<time>${formatTimeOpener(now)}</time>\n${body}\n</discord>`;
 }
 
 /**
@@ -70,10 +70,6 @@ function xmlAttr(s: string): string {
     .replace(/>/g, "&gt;");
 }
 
-/**
- * Build the location attributes for a `<ping>` (DMs vs guild channels
- * differ — DM gets `dm="true"` and no server/channel).
- */
 function pingLocationAttrs(ev: DiscliMessageEvent): string {
   if (ev.is_dm) return ` dm="true"`;
   const parts: string[] = [];
@@ -97,7 +93,7 @@ function formatPingPush(e: BufferedEvent, previewLength: number): string {
       : e.ev.content;
   const tail =
     e.ev.content.length > previewLength
-      ? `\n(${e.ev.content.length} chars; full via \`disclaw-ctl history ${e.ev.channel_id} --from ${e.ev.timestamp}\`)`
+      ? `\n(${e.ev.content.length} chars; full via \`pi-discord-ctl history ${e.ev.channel_id} --from ${e.ev.timestamp}\`)`
       : "";
   return `${pingOpenTag(e)}\n${trimmed}${tail}${formatAttachments(e.ev)}\n</ping>`;
 }
@@ -106,12 +102,6 @@ function formatPingFollowUp(e: BufferedEvent): string {
   return `${pingOpenTag(e)}\n${e.ev.content}${formatAttachments(e.ev)}\n</ping>`;
 }
 
-/**
- * Format Discord file attachments as self-closing XML tags. One per
- * line, appended after the message they belong to. Includes filename
- * + url (always) and size in bytes (when known). Agent can fetch the
- * url via bash if they want the bytes.
- */
 function formatAttachments(ev: DiscliMessageEvent): string {
   if (!ev.attachments || ev.attachments.length === 0) return "";
   return (
@@ -125,7 +115,6 @@ function formatAttachments(ev: DiscliMessageEvent): string {
   );
 }
 
-/** A single line within a `<channel>` block. No uid here — agent uses `whois`. */
 function formatChannelLine(e: BufferedEvent): string {
   return `${e.ev.author} (${formatWallTime(e.arrivedAt)}): ${e.ev.content}${formatAttachments(e.ev)}`;
 }
@@ -151,16 +140,11 @@ export function formatBatch(events: BufferedEvent[], opts: FormatBatchOptions): 
   const channelEvents = events.filter((e) => e.class === "channel");
   const sections: string[] = [];
 
-  // Pings first — each in its own <ping> tag (parser-unambiguous,
-  // metadata in attributes, content as text).
   if (pings.length > 0) {
     const fmt = opts.pingStyle === "push" ? (p: BufferedEvent) => formatPingPush(p, opts.pingPreviewLength) : formatPingFollowUp;
     sections.push(pings.map(fmt).join("\n\n"));
   }
 
-  // Channel events: group by channel_id, then sort groups by last activity (oldest first).
-  // Each group becomes a <channel server name> tag. Per-line author/time
-  // inside; uid is dropped (agent uses `whois` if they want to ping).
   const byChannel = new Map<string, BufferedEvent[]>();
   for (const e of channelEvents) {
     const arr = byChannel.get(e.ev.channel_id) ?? [];

@@ -29,7 +29,7 @@ function ev(overrides: Partial<DiscliMessageEvent> = {}): DiscliMessageEvent {
 }
 
 function freshFile(): string {
-  const dir = mkdtempSync(join(tmpdir(), "disclaw-missed-pings-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "pi-discord-missed-pings-test-"));
   return join(dir, "missed-pings.log");
 }
 

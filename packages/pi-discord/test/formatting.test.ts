@@ -4,7 +4,7 @@ import {
   formatBatch,
   formatTimeOpener,
   formatWallTime,
-  wrapDisclaw,
+  wrapDiscord,
   type BufferedEvent,
 } from "../src/formatting.js";
 import type { DiscliMessageEvent } from "../src/routing.js";
@@ -136,7 +136,7 @@ test("single push ping: long content, truncated with pointer line", () => {
   );
   assert.match(out, /^<ping /);
   assert.match(out, /…/);
-  assert.match(out, /300 chars; full via `disclaw-ctl history C-100/);
+  assert.match(out, /300 chars; full via `pi-discord-ctl history C-100/);
   assert.match(out, /<\/ping>$/);
 });
 
@@ -292,14 +292,14 @@ test("XML attribute escaping: server name with special chars", () => {
 
 // ── Wrap helper ───────────────────────────────────────────────────────────
 
-test("wrapDisclaw: opens with <time> tag carrying YYYY-MM-DD HH:MM", () => {
+test("wrapDiscord: opens with <time> tag carrying YYYY-MM-DD HH:MM", () => {
   assert.equal(
-    wrapDisclaw("hi", ANCHOR),
-    "<disclaw>\n<time>2026-05-12 20:54</time>\nhi\n</disclaw>",
+    wrapDiscord("hi", ANCHOR),
+    "<discord>\n<time>2026-05-12 20:54</time>\nhi\n</discord>",
   );
 });
 
-test("wrapDisclaw: defaults `now` to Date.now() when omitted", () => {
-  const out = wrapDisclaw("hi");
-  assert.match(out, /^<disclaw>\n<time>\d{4}-\d{2}-\d{2} \d{2}:\d{2}<\/time>\nhi\n<\/disclaw>$/);
+test("wrapDiscord: defaults `now` to Date.now() when omitted", () => {
+  const out = wrapDiscord("hi");
+  assert.match(out, /^<discord>\n<time>\d{4}-\d{2}-\d{2} \d{2}:\d{2}<\/time>\nhi\n<\/discord>$/);
 });

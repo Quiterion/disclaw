@@ -1,0 +1,19 @@
+{
+  "name": "pi-discord",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "pi-discord-ctl": "./bin/pi-discord-ctl"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty",
+    "daemon": "node --import tsx src/daemon.ts",
+    "ctl": "node --import tsx src/ctl.ts",
+    "test": "node --import tsx --test test/**/*.test.ts"
+  },
+  "dependencies": {
+    "pi-shared": "*"
+  }
+}
