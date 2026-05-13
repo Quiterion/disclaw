@@ -88,13 +88,17 @@ async function main(): Promise<void> {
 
   const sleepNudge = new SleepNudgeManager(state.idle_nudge_timeout_ms, {
     onFire: (reason) => {
+      // Deliberately terse. Earlier copy followed up the neutral
+      // "use this run however you like" with three productive
+      // suggestions (write notes, check the system, edit
+      // sysprompt), which gently re-prescribed the very thing the
+      // sentence was trying not to. Tester read this as a faint
+      // pull toward output. The principle is "agency over
+      // attention"; the nudge text should respect that.
       const text =
         reason === "sleep-expired"
-          ? "Your sleep duration expired and no new activity arrived. " +
-            "Use `pi-ctl sleep` again to wait some more, or use this run however you like."
-          : "No new activity since you last responded. Use `pi-ctl sleep` to " +
-            "wait until something happens, or use this run however you like — " +
-            "write notes, check the system, edit your sysprompt.";
+          ? "Sleep duration expired with no new activity. `pi-ctl sleep` if you'd rather keep waiting."
+          : "No new activity. `pi-ctl sleep` if you'd rather wait until something happens.";
       host
         .prompt(wrapHostMessage(text))
         .catch((err) => log(`[nudge-error] ${err.message}`));

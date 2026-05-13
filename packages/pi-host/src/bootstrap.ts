@@ -22,13 +22,16 @@ export interface BootstrapResult {
 }
 
 /**
- * The first user-message a fresh agent sees. Three sentences,
- * deliberately minimal — lets the agent discover their environment
- * via `pwd` / `ls` / reading welcome.md.
+ * The first user-message a fresh agent sees. Deliberately minimal —
+ * lets the agent discover their environment via `pwd` / `ls` /
+ * reading welcome.md. Earlier wording put the literal token `pwd`
+ * where the cwd would conceptually go, which read as a placeholder
+ * the operator forgot to fill in — every tester ran `pwd` next
+ * regardless of what we wrote, so we just point at the tool instead.
  */
 const FIRST_RUN_PROMPT =
-  "Hi. You're in a long-running agent harness. You are in `pwd`. " +
-  "There is a welcome doc at `welcome.md`.";
+  "Hi. You're in a long-running agent harness. " +
+  "Your cwd (`pwd` to confirm) has a welcome doc at `welcome.md`.";
 
 export function maybeBootstrap(state: HostState): BootstrapResult {
   if (state.initialized) {
