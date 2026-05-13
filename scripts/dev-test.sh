@@ -31,10 +31,7 @@ echo "==> test cwd: $TEST_DIR"
 # Seed agent-facing docs
 cp -r "$REPO_DIR/docs/agent/"* "$TEST_DIR/"
 
-# Use the testing-variant welcome
-cp "$REPO_DIR/docs/dev/welcome.testing.md" "$TEST_DIR/welcome.md"
-
-echo "==> seeded $(ls "$TEST_DIR" | wc -l) entries from docs/agent + welcome.testing.md"
+echo "==> seeded $(ls "$TEST_DIR" | wc -l) entries from docs/agent"
 
 echo "==> building..."
 (cd "$REPO_DIR" && npm run build > /dev/null)
