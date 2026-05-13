@@ -10,6 +10,14 @@ that owns your pi runtime (the agent loop), your sysprompt slot, your
 sleep/wake state, and the idle-nudge timer. Run it from any cwd; it
 talks to the daemon over a Unix socket.
 
+The socket is resolved in this order: `$PI_HOST_RUNTIME_DIR/pi-host.sock`
+if that env var is set (strict — fails loudly if missing); otherwise
+the user-level default `~/.local/state/pi-host/pi-host.sock`;
+otherwise `$PWD/.pi-host/pi-host.sock` for sandboxed cwds (e.g. an
+agent's cwd inside a test runtime). The cwd fallback means a fresh
+bash subprocess that didn't inherit `PI_HOST_RUNTIME_DIR` still
+works if you're in the right directory.
+
 Discord-specific verbs (subscribe, send, react, typing, channels,
 etc.) live in `pi-discord-ctl`, talking to a separate `pi-discord`
 daemon — see `skills/pi-discord-ctl/SKILL.md`.
