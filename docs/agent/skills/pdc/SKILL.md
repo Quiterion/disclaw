@@ -1,9 +1,9 @@
 ---
-name: pdc
+name: pdc (pi-discord-ctl)
 description: Interface to the pi-discord daemon — the bridge between this environment and Discord.
 ---
 
-# pdc reference
+# pi-discord-ctl reference
 
 `pdc` is your interface to the **pi-discord** daemon — the
 process that bridges this environment to Discord. Run it from any cwd;
