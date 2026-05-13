@@ -12,11 +12,21 @@
  *   even though the event is 47 minutes old. Wall-clock anchors the
  *   timing to a specific point that stays correct forever.
  *
- * Why `uid="..."` next to author name:
+ * Why `uid="..."` next to author name on `<ping>`:
  *   Inbound mention syntax is humanized to `@name` (discli patch), but
  *   to *send* a mention the agent needs the wire form `<@user_id>`.
  *   Surfacing the uid here means the agent has it in front of them
  *   without an extra `pi-discord-ctl history` round-trip.
+ *
+ * Why each `<channel>` message gets its own `<msg ... id="...">`:
+ *   Ambient lines need the Discord message_id available for one-step
+ *   reactions; without it, agents who want to react on something they
+ *   saw stream past have to fall back to `history` and disambiguate
+ *   (and the prior line-style format confused at least one tester
+ *   into using an attachment URL's id, which is the file id, not the
+ *   message id). The XML wrap also handles multi-line message content
+ *   cleanly — the previous line-per-event shape ambiguated on
+ *   newline-in-content.
  *
  * Layout:
  *   - Pings are emphasized; they appear before channel content in a batch
@@ -115,8 +125,18 @@ function formatAttachments(ev: DiscliMessageEvent): string {
   );
 }
 
-function formatChannelLine(e: BufferedEvent): string {
-  return `${e.ev.author} (${formatWallTime(e.arrivedAt)}): ${e.ev.content}${formatAttachments(e.ev)}`;
+/**
+ * Render a single message inside a `<channel>` block. Wrapped in
+ * `<msg>` with author / wall-clock / message-id attributes so the
+ * agent can react/reply without a history round-trip. No uid here —
+ * `whois` handles name → id resolution. Attachments hang inside the
+ * body the same way they do inside `<ping>`.
+ */
+function formatChannelMsg(e: BufferedEvent): string {
+  const open =
+    `<msg author="${xmlAttr(e.ev.author)}"` +
+    ` at="${formatWallTime(e.arrivedAt)}" id="${e.ev.message_id}">`;
+  return `${open}${e.ev.content}${formatAttachments(e.ev)}</msg>`;
 }
 
 function channelOpenTag(ev: DiscliMessageEvent): string {
@@ -160,7 +180,7 @@ export function formatBatch(events: BufferedEvent[], opts: FormatBatchOptions): 
   for (const group of channelGroups) {
     const first = group[0]!;
     const open = channelOpenTag(first.ev);
-    const lines = group.map((e) => formatChannelLine(e));
+    const lines = group.map((e) => formatChannelMsg(e));
     sections.push([open, ...lines, "</channel>"].join("\n"));
   }
 

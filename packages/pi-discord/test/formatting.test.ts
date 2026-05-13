@@ -60,35 +60,35 @@ test("formatTimeOpener: YYYY-MM-DD HH:MM in local time", () => {
 
 // ── Channel sections (XML-wrapped) ────────────────────────────────────────
 
-test("single channel message: wrapped in <channel> with server/name attrs, no uid per line", () => {
+test("single channel message: <msg> child carrying author/at/id, no uid", () => {
   const out = formatBatch(
-    [bufAt({ author: "alice", author_id: "U-alice", content: "hi" }, ANCHOR)],
+    [bufAt({ author: "alice", author_id: "U-alice", message_id: "msg-1", content: "hi" }, ANCHOR)],
     optsFollowUp,
   );
   assert.equal(
     out,
-    `<channel server="Test Server" name="#general">\nalice (20:54): hi\n</channel>`,
+    `<channel server="Test Server" name="#general">\n<msg author="alice" at="20:54" id="msg-1">hi</msg>\n</channel>`,
   );
-  // No uid leaked in the per-line form
-  assert.doesNotMatch(out, /uid:/);
+  // No uid leaked per-message
+  assert.doesNotMatch(out, /uid=/);
 });
 
-test("multi-message channel batch: open tag, lines, close tag — no 'last activity' annotation", () => {
+test("multi-message channel batch: each message in its own <msg>", () => {
   const t0 = new Date(2026, 4, 12, 20, 50).getTime();
   const t1 = new Date(2026, 4, 12, 20, 51).getTime();
   const t2 = new Date(2026, 4, 12, 20, 54).getTime();
   const out = formatBatch(
     [
-      bufAt({ author: "alice", content: "hey opus, around?" }, t0),
-      bufAt({ author: "bob", content: "I think they're afk" }, t1),
-      bufAt({ author: "alice", content: "👋" }, t2),
+      bufAt({ author: "alice", message_id: "m-a", content: "hey opus, around?" }, t0),
+      bufAt({ author: "bob", message_id: "m-b", content: "I think they're afk" }, t1),
+      bufAt({ author: "alice", message_id: "m-c", content: "👋" }, t2),
     ],
     optsFollowUp,
   );
   assert.match(out, /^<channel server="Test Server" name="#general">/);
-  assert.match(out, /alice \(20:50\): hey opus, around\?/);
-  assert.match(out, /bob \(20:51\): I think they're afk/);
-  assert.match(out, /alice \(20:54\): 👋/);
+  assert.match(out, /<msg author="alice" at="20:50" id="m-a">hey opus, around\?<\/msg>/);
+  assert.match(out, /<msg author="bob" at="20:51" id="m-b">I think they're afk<\/msg>/);
+  assert.match(out, /<msg author="alice" at="20:54" id="m-c">👋<\/msg>/);
   assert.match(out, /<\/channel>$/);
   assert.doesNotMatch(out, /last activity/);
 });
@@ -113,6 +113,25 @@ test("multiple channels: each in its own <channel>, sorted by last activity", ()
   const idxB = out.indexOf(`name="#off-topic"`);
   assert.ok(idxA >= 0 && idxB >= 0);
   assert.ok(idxA < idxB);
+});
+
+test("channel message with newlines: content sits inline inside <msg>", () => {
+  const out = formatBatch(
+    [bufAt({ author: "alice", message_id: "m-1", content: "first\nsecond\nthird" }, ANCHOR)],
+    optsFollowUp,
+  );
+  assert.match(
+    out,
+    /<msg author="alice" at="20:54" id="m-1">first\nsecond\nthird<\/msg>/,
+  );
+});
+
+test("channel author name with special chars: XML-escaped in <msg> attribute", () => {
+  const out = formatBatch(
+    [bufAt({ author: `weird "name" & <tag>`, message_id: "m-1", content: "hi" }, ANCHOR)],
+    optsFollowUp,
+  );
+  assert.match(out, /author="weird &quot;name&quot; &amp; &lt;tag&gt;"/);
 });
 
 // ── Pings (XML-wrapped) ───────────────────────────────────────────────────
@@ -195,12 +214,13 @@ test("empty batch: empty string", () => {
 
 // ── Attachments ───────────────────────────────────────────────────────────
 
-test("channel msg with one attachment: <attachment> tag on the next line", () => {
+test("channel msg with one attachment: <attachment> inside the <msg> body", () => {
   const out = formatBatch(
     [
       bufAt(
         {
           author: "alice",
+          message_id: "m-1",
           content: "check this out",
           attachments: [{ filename: "screen.png", url: "https://cdn/abc.png", size: 12345 }],
         },
@@ -209,15 +229,19 @@ test("channel msg with one attachment: <attachment> tag on the next line", () =>
     ],
     optsFollowUp,
   );
-  assert.match(out, /alice \(20:54\): check this out\n<attachment filename="screen.png" size="12345" url="https:\/\/cdn\/abc.png"\/>/);
+  assert.match(
+    out,
+    /<msg author="alice" at="20:54" id="m-1">check this out\n<attachment filename="screen.png" size="12345" url="https:\/\/cdn\/abc.png"\/><\/msg>/,
+  );
 });
 
-test("channel msg with multiple attachments: each on its own line", () => {
+test("channel msg with multiple attachments: each on its own line inside <msg>", () => {
   const out = formatBatch(
     [
       bufAt(
         {
           author: "alice",
+          message_id: "m-1",
           content: "few screens",
           attachments: [
             { filename: "a.png", url: "https://cdn/a.png" },
@@ -229,7 +253,10 @@ test("channel msg with multiple attachments: each on its own line", () => {
     ],
     optsFollowUp,
   );
-  assert.match(out, /<attachment filename="a.png" url="https:\/\/cdn\/a.png"\/>\n<attachment filename="b.png" size="999" url="https:\/\/cdn\/b.png"\/>/);
+  assert.match(
+    out,
+    /<attachment filename="a.png" url="https:\/\/cdn\/a.png"\/>\n<attachment filename="b.png" size="999" url="https:\/\/cdn\/b.png"\/><\/msg>/,
+  );
 });
 
 test("ping with attachment: tag inside the <ping> body", () => {

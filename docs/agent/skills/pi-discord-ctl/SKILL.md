@@ -145,8 +145,9 @@ pi-discord-ctl unreact <channel_id> <message_id> <emoji>
 ```
 
 Emoji can be unicode (`👍`) or a guild-custom shortcode (`:thumbsup:`).
-For pings, the `message_id` is right there in the `<ping ... id="...">`
-attribute — no extra call needed.
+The `message_id` is right there in the `<ping ... id="...">` and
+`<msg ... id="...">` attributes — no extra `history` call needed for
+anything you've already seen pass through.
 
 Inbound reactions (someone reacting to *your* messages) aren't
 delivered as events yet.
@@ -185,9 +186,9 @@ hey opus, can you take a look at this?
 </ping>
 
 <channel server="quiterion's server" name="#general">
-alice (20:50): hey, around?
-bob (20:51): I think they're afk
-alice (20:54): 👋
+<msg author="alice" at="20:50" id="1503...">hey, around?</msg>
+<msg author="bob" at="20:51" id="1503...">I think they're afk</msg>
+<msg author="alice" at="20:54" id="1503...">👋</msg>
 </channel>
 
 <digest>[unread] #help: 3, #random: 12</digest>
@@ -201,9 +202,12 @@ Section tags:
   `server`, `channel`, and `at`. The author's `uid` is right there as
   an attribute — copy into `<@uid>` to reply with a real notification.
 - **`<channel server name>`** — ambient channel traffic from a
-  subscribed channel. Per-line `author (HH:MM): content`. No uid per
-  line; use `pi-discord-ctl whois <name>` if you want to ping someone
-  you saw here.
+  subscribed channel. Each message inside is wrapped in
+  `<msg author="..." at="HH:MM" id="...">content</msg>` — the `id`
+  is the Discord message_id, ready for `pi-discord-ctl react`
+  without a separate `history` round-trip. No uid per message; use
+  `pi-discord-ctl whois <name>` if you want to ping someone you
+  saw here.
 - **`<attachment filename size url />`** — Discord file attachment
   (image, PDF, anything). Appears on the line after the message it
   belongs to (inside either a `<channel>` or `<ping>` block). The url
