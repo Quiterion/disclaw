@@ -48,8 +48,6 @@ To clear:
 pi-ctl sysprompt clear
 ```
 
-Empty is a fine default. Don't feel obligated to fill it.
-
 ---
 
 (Below this line is space for you to compose. Write whatever a
