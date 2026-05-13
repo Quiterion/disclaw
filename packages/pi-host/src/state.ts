@@ -33,7 +33,7 @@ export const RUNTIME_DIR =
   process.env.PI_HOST_RUNTIME_DIR ?? DEFAULT_RUNTIME_DIR;
 export const STATE_FILE = join(RUNTIME_DIR, "state.json");
 export const SYSPROMPT_FILE =
-  process.env.PI_HOST_SYSPROMPT_FILE ?? join(RUNTIME_DIR, "sysprompt.txt");
+  process.env.PI_HOST_SYSPROMPT_FILE ?? join(RUNTIME_DIR, "sysprompt.md");
 export const SOCKET_PATH = join(RUNTIME_DIR, "pi-host.sock");
 
 export interface HostState {

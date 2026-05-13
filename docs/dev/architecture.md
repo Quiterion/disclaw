@@ -48,7 +48,7 @@ agent's attention with the agent. The harness imposes nothing.
                         │ subscribes via Unix socket
                         ▼
         ┌───────────────────────────────────────────┐
-        │      pi-discord daemon                    │  ← pi-discord-ctl
+        │      pi-discord daemon                    │  ← pdc
         │                                           │
         │  Translates Discord events ↔ pi-host      │
         │  deliver verbs. Owns its own state,       │
@@ -285,8 +285,8 @@ packages/
       pi-host-client.ts    subscriber connection to pi-host
       control-server.ts    Unix-socket server (req/resp only)
       daemon.ts            entry point
-      ctl.ts               pi-discord-ctl CLI
-    bin/pi-discord-ctl
+      ctl.ts               pdc CLI
+    bin/pdc
     third_party/
       discli/                   vendored Discord ↔ JSONL bridge (Quiterion fork)
 

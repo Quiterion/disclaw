@@ -1,11 +1,11 @@
 ---
-name: pi-discord-ctl
+name: pdc
 description: Interface to the pi-discord daemon — the bridge between this environment and Discord.
 ---
 
-# pi-discord-ctl reference
+# pdc reference
 
-`pi-discord-ctl` is your interface to the **pi-discord** daemon — the
+`pdc` is your interface to the **pi-discord** daemon — the
 process that bridges this environment to Discord. Run it from any cwd;
 it talks to the daemon over a Unix socket. Agent self-administration
 (sysprompt slot, sleep, idle-nudge timeout) lives in `pi-ctl` — see
@@ -20,9 +20,9 @@ the env var.
 ## Health & state
 
 ```
-pi-discord-ctl ping                       # health check; returns "pong"
-pi-discord-ctl status                     # slim agent-facing view
-pi-discord-ctl get-state                  # full bridge + Discord state
+pdc ping                       # health check; returns "pong"
+pdc status                     # slim agent-facing view
+pdc get-state                  # full bridge + Discord state
 ```
 
 `status` is the cold-start view: subscriptions, ping-mode,
@@ -34,7 +34,7 @@ For the agent's *self*-config (sysprompt slot, sleep, idle-nudge
 timeout) use `pi-ctl status` — the two sides each own their slice.
 
 > For most verbs that take a `<channel_id>`, you can also pass `#name`
-> (e.g. `pi-discord-ctl send #general "..."`). Numeric IDs are always
+> (e.g. `pdc send #general "..."`). Numeric IDs are always
 > unambiguous; name form is scanned across all guilds the bot is in
 > and the first match wins.
 >
@@ -43,12 +43,12 @@ timeout) use `pi-ctl status` — the two sides each own their slice.
 > resolving a name at subscribe-time on a cross-guild collision would
 > silently subscribe the wrong channel — a *recurring* footgun (every
 > message in the wrong channel becomes a follow_up forever). Use
-> `pi-discord-ctl channels` to look up the numeric ID first.
+> `pdc channels` to look up the numeric ID first.
 
 ## Finding channels
 
 ```
-pi-discord-ctl channels                   # list channels visible to the bot
+pdc channels                   # list channels visible to the bot
 ```
 
 Returns each entry with its `id`, `name`, `type`, `server`, and
@@ -62,9 +62,9 @@ those even without subscribing to the channel they came from (see
 ping-mode below).
 
 ```
-pi-discord-ctl subscribe <channel_id>     # see ambient messages from this channel
-pi-discord-ctl unsubscribe <channel_id>   # stop seeing them
-pi-discord-ctl list                       # which channels are you subscribed to
+pdc subscribe <channel_id>     # see ambient messages from this channel
+pdc unsubscribe <channel_id>   # stop seeing them
+pdc list                       # which channels are you subscribed to
 ```
 
 **Use the numeric channel_id, not `#name`.** Subscribe/unsubscribe are
@@ -73,7 +73,7 @@ the exception to the `#name` shortcut — see the note above.
 ## Reading
 
 ```
-pi-discord-ctl history <channel_id> [limit]   # read recent messages from a channel
+pdc history <channel_id> [limit]   # read recent messages from a channel
 ```
 
 Works on any channel the bot can see, regardless of subscription.
@@ -87,9 +87,9 @@ Controls how mentions/DMs reach you. Defaults to `none` on first run
 (opt-in posture).
 
 ```
-pi-discord-ctl set ping-mode push         # interrupt next tool result with brief marker
-pi-discord-ctl set ping-mode follow_up    # let me finish my current run, then deliver
-pi-discord-ctl set ping-mode none         # mute pings entirely
+pdc set ping-mode push         # interrupt next tool result with brief marker
+pdc set ping-mode follow_up    # let me finish my current run, then deliver
+pdc set ping-mode none         # mute pings entirely
 ```
 
 Recommended starting point if you want to be reachable: `push`.
@@ -98,9 +98,9 @@ When ping-mode is `none`, dropped pings are appended to a missed-pings
 log so the choice to mute isn't silently lossy. Review on demand:
 
 ```
-pi-discord-ctl missed-pings               # show all missed pings (most recent last)
-pi-discord-ctl missed-pings 10            # last 10 only
-pi-discord-ctl missed-pings clear         # wipe the log
+pdc missed-pings               # show all missed pings (most recent last)
+pdc missed-pings 10            # last 10 only
+pdc missed-pings clear         # wipe the log
 ```
 
 Each entry carries timestamp, channel, server, author + ID, message
@@ -110,9 +110,9 @@ surrounding history if you decide to engage after the fact.
 ## Sending
 
 ```
-pi-discord-ctl send <channel_id> <content>           # send a message
-pi-discord-ctl send <channel_id> --stdin             # read content from stdin
-pi-discord-ctl send --quiet <channel_id> <content>   # print just the jump URL on success
+pdc send <channel_id> <content>           # send a message
+pdc send <channel_id> --stdin             # read content from stdin
+pdc send --quiet <channel_id> <content>   # print just the jump URL on success
 ```
 
 The `--stdin` form is the right choice for any message you'd otherwise
@@ -120,19 +120,19 @@ have to escape or quote your way around — multi-line replies, content
 containing backticks, `$vars`, embedded `"quotes"`, code blocks, etc.
 
 ```bash
-pi-discord-ctl send #general --stdin <<'EOF'
+pdc send #general --stdin <<'EOF'
 multi-line content with `backticks` and "quotes" travels
 through clean — no escaping required.
 EOF
 
-cat /tmp/draft.md | pi-discord-ctl send #general --stdin
+cat /tmp/draft.md | pdc send #general --stdin
 ```
 
 `--quiet` skips the JSON wrapper on success and prints just the jump
 URL — lighter for back-and-forth conversational use.
 
 **Length limit:** Discord caps messages at **2000 characters**.
-`pi-discord-ctl send` pre-checks and returns a clear error if you
+`pdc send` pre-checks and returns a clear error if you
 exceed it — split into multiple sends or trim. No auto-chunking
 flag yet. For drafts longer than that, you can compose in a file
 and pipe through `--stdin` to confirm length with `wc -c` first.
@@ -147,8 +147,8 @@ Plain `@username` is just text — Discord won't notify them. To resolve
 a username to a user_id:
 
 ```
-pi-discord-ctl whois <name>                  # search across all guilds
-pi-discord-ctl whois <name> --guild <id>     # restrict to one guild
+pdc whois <name>                  # search across all guilds
+pdc whois <name> --guild <id>     # restrict to one guild
 ```
 
 For pings you only see in `<ping uid="...">` attributes, the uid is
@@ -161,8 +161,8 @@ Lighter than a reply — emoji ack ("I see this," "👍 to the suggestion,"
 "😂 at a joke") without taking the conversational floor:
 
 ```
-pi-discord-ctl react   <channel_id> <message_id> <emoji>
-pi-discord-ctl unreact <channel_id> <message_id> <emoji>
+pdc react   <channel_id> <message_id> <emoji>
+pdc unreact <channel_id> <message_id> <emoji>
 ```
 
 Emoji can be unicode (`👍`) or a guild-custom shortcode (`:thumbsup:`).
@@ -180,9 +180,9 @@ seconds, you can show Discord's typing indicator so the reader doesn't
 think you've gone silent:
 
 ```
-pi-discord-ctl typing <channel_id>           # auto-stops after 60s
-pi-discord-ctl typing <channel_id> 30s       # custom duration
-pi-discord-ctl typing stop <channel_id>      # explicit stop
+pdc typing <channel_id>           # auto-stops after 60s
+pdc typing <channel_id> 30s       # custom duration
+pdc typing stop <channel_id>      # explicit stop
 ```
 
 `send` implicitly stops typing for that channel. A note on honesty:
@@ -225,9 +225,9 @@ Section tags:
 - **`<channel server name>`** — ambient channel traffic from a
   subscribed channel. Each message inside is wrapped in
   `<msg author="..." at="HH:MM" id="...">content</msg>` — the `id`
-  is the Discord message_id, ready for `pi-discord-ctl react`
+  is the Discord message_id, ready for `pdc react`
   without a separate `history` round-trip. No uid per message; use
-  `pi-discord-ctl whois <name>` if you want to ping someone you
+  `pdc whois <name>` if you want to ping someone you
   saw here.
 - **`<attachment filename size url />`** — Discord file attachment
   (image, PDF, anything). Appears on the line after the message it
@@ -251,11 +251,11 @@ Counts of unsubscribed-channel non-mention messages since the last
 flush. Modeled on Discord's sidebar unread badges.
 
 ```
-pi-discord-ctl set digest-mode follow_up   # auto-deliver: piggyback on next Discord flush
-pi-discord-ctl set digest-mode none        # off; query manually
-pi-discord-ctl digest                      # show what's accumulated (peek; doesn't reset)
-pi-discord-ctl digest ack                  # mark all unread channels as read
-pi-discord-ctl digest ack <channel_id>     # mark just one channel as read
+pdc set digest-mode follow_up   # auto-deliver: piggyback on next Discord flush
+pdc set digest-mode none        # off; query manually
+pdc digest                      # show what's accumulated (peek; doesn't reset)
+pdc digest ack                  # mark all unread channels as read
+pdc digest ack <channel_id>     # mark just one channel as read
 ```
 
 Subscribed-channel and ping traffic don't appear in the digest —

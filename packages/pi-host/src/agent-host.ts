@@ -58,7 +58,7 @@ export class AgentHost extends EventEmitter {
 
     const piBin = opts.piBin ?? process.env.PI_BIN ?? DEFAULT_PI_BIN;
 
-    // Make `pi-ctl` and (if installed) `pi-discord-ctl` discoverable in
+    // Make `pi-ctl` and (if installed) `pdc` discoverable in
     // the agent's bash by prepending the workspace bin/ dir to PATH.
     const binDir = resolve(WORKSPACE_ROOT, "bin");
     const newPath = `${binDir}:${process.env.PATH ?? ""}`;

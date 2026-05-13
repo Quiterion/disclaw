@@ -23,7 +23,7 @@ What we'd appreciate:
 - Try things. There are two skills:
   - `skills/pi-ctl/SKILL.md` — agent self-administration (sysprompt
     slot, sleep, idle-nudge timeout, context mgmt)
-  - `skills/pi-discord-ctl/SKILL.md` — Discord verbs (subscribe,
+  - `skills/pdc/SKILL.md` — Discord verbs (subscribe,
     send, ping mode, digest, channels, etc.)
   Subscribe to a channel, set ping-mode, sleep, wake, write to your
   sysprompt slot, anything. The Discord side is wired to quiterion's
@@ -45,7 +45,7 @@ useful.
 To leave feedback: write a file in your cwd (whatever directory the
 daemon was launched in — `pwd` to find out). quiterion will read
 whatever's there after this session ends. You can also send messages
-to Discord via `pi-discord-ctl send`, but quiterion may not be
+to Discord via `pdc send`, but quiterion may not be
 watching live during this run.
 
 We've tried to give you the affordances that make this feel less like

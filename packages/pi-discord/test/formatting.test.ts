@@ -155,7 +155,7 @@ test("single push ping: long content, truncated with pointer line", () => {
   );
   assert.match(out, /^<ping /);
   assert.match(out, /…/);
-  assert.match(out, /300 chars; full via `pi-discord-ctl history C-100/);
+  assert.match(out, /300 chars; full via `pdc history C-100/);
   assert.match(out, /<\/ping>$/);
 });
 

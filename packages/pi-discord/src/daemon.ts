@@ -6,7 +6,7 @@
  *   - the discli subprocess (Discord ↔ JSONL bridge)
  *   - routing state (subscriptions, ping_mode, digest_mode)
  *   - per-mode buffering + digest accumulator + missed-pings log
- *   - the pi-discord-ctl unix socket
+ *   - its own unix-socket control plane (clients use `pdc`)
  *   - a single subscriber connection to pi-host
  *
  * Does not own:
@@ -282,7 +282,7 @@ async function main(): Promise<void> {
             ok: false,
             error:
               `${req.cmd} requires a numeric channel_id, got: ${JSON.stringify(id)}. ` +
-              `Use \`pi-discord-ctl channels\` to find the id; #name is not accepted ` +
+              `Use \`pdc channels\` to find the id; #name is not accepted ` +
               `here (cross-guild collisions would silently subscribe the wrong channel).`,
           };
         }

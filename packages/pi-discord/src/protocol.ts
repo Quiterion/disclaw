@@ -1,5 +1,5 @@
 /**
- * Control-plane protocol between pi-discord-ctl and the pi-discord
+ * Control-plane protocol between pdc and the pi-discord
  * daemon. Strictly request/response over a Unix socket — pi-discord
  * has no pub/sub surface (subscribing to pi happens via pi-host's
  * socket, in the opposite direction).
@@ -9,7 +9,7 @@ export type PingMode = "push" | "follow_up" | "none";
 /**
  * How the activity digest is delivered. `follow_up` piggybacks the
  * digest on whatever Discord-event delivery fires next; `none` keeps
- * it off-channel (the agent can still inspect via `pi-discord-ctl
+ * it off-channel (the agent can still inspect via `pdc
  * digest`). `push` is intentionally not offered (digest is ambient
  * background, never an interrupt).
  */

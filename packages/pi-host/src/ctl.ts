@@ -7,7 +7,7 @@
  *
  * pi-ctl handles the agent's self-administration verbs only —
  * sysprompt slot, sleep/wake, idle-nudge timeout, deploy state.
- * Discord-side verbs live in pi-discord-ctl (separate binary, separate
+ * Discord-side verbs live in pdc (separate binary, separate
  * socket).
  */
 import { connect, type Socket } from "node:net";
@@ -71,7 +71,7 @@ Idle nudges + sleep (your relationship with your own attention):
   pi-ctl wake                            cancel an active sleep manually
 
 For Discord verbs (subscribe, send, history, channels, etc.), use the
-separate \`pi-discord-ctl\` binary, which talks to the pi-discord daemon
+separate \`pdc\` binary, which talks to the pi-discord daemon
 on its own socket.
 `;
 

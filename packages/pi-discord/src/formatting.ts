@@ -16,7 +16,7 @@
  *   Inbound mention syntax is humanized to `@name` (discli patch), but
  *   to *send* a mention the agent needs the wire form `<@user_id>`.
  *   Surfacing the uid here means the agent has it in front of them
- *   without an extra `pi-discord-ctl history` round-trip.
+ *   without an extra `pdc history` round-trip.
  *
  * Why each `<channel>` message gets its own `<msg ... id="...">`:
  *   Ambient lines need the Discord message_id available for one-step
@@ -103,7 +103,7 @@ function formatPingPush(e: BufferedEvent, previewLength: number): string {
       : e.ev.content;
   const tail =
     e.ev.content.length > previewLength
-      ? `\n(${e.ev.content.length} chars; full via \`pi-discord-ctl history ${e.ev.channel_id} --from ${e.ev.timestamp}\`)`
+      ? `\n(${e.ev.content.length} chars; full via \`pdc history ${e.ev.channel_id} --from ${e.ev.timestamp}\`)`
       : "";
   return `${pingOpenTag(e)}\n${trimmed}${tail}${formatAttachments(e.ev)}\n</ping>`;
 }

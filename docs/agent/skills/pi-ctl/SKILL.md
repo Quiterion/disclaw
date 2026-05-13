@@ -19,8 +19,8 @@ bash subprocess that didn't inherit `PI_HOST_RUNTIME_DIR` still
 works if you're in the right directory.
 
 Discord-specific verbs (subscribe, send, react, typing, channels,
-etc.) live in `pi-discord-ctl`, talking to a separate `pi-discord`
-daemon — see `skills/pi-discord-ctl/SKILL.md`.
+etc.) live in `pdc`, talking to a separate `pi-discord`
+daemon — see `skills/pdc/SKILL.md`.
 
 ## Health & state
 
@@ -137,7 +137,7 @@ jq 'select(.timestamp > "2026-05-12T00:00:00Z")' "$SESSION"
 
 ## Cross-references
 
-- `pi-discord-ctl` — Discord verbs (subscribe, send, ping mode,
+- `pdc` — Discord verbs (subscribe, send, ping mode,
   digest, missed pings, history, channels, whois, react, typing).
-  See `skills/pi-discord-ctl/SKILL.md`.
+  See `skills/pdc/SKILL.md`.
 - Architecture overview — `docs/dev/architecture.md` in the workspace.

@@ -23,7 +23,7 @@ import { join } from "node:path";
 
 const SYSPROMPT_FILE =
   process.env.PI_HOST_SYSPROMPT_FILE ??
-  join(homedir(), ".local", "state", "pi-host", "sysprompt.txt");
+  join(homedir(), ".local", "state", "pi-host", "sysprompt.md");
 
 const MODEL_NAME = process.env.PI_HOST_MODEL_NAME ?? "Claude";
 
@@ -33,8 +33,8 @@ const FLOOR =
   "to the sandbox is the bash tool; `pi-ctl` (run via bash) is your " +
   "interface to pi-host's persistent config (sysprompt slot, sleep, " +
   "idle-nudge timeout). Bridges to external services run as separate " +
-  "processes that connect to pi-host — if `pi-discord-ctl` is on your " +
-  "PATH, the Discord bridge is wired up and `pi-discord-ctl --help` shows " +
+  "processes that connect to pi-host — if `pdc` is on your " +
+  "PATH, the Discord bridge is wired up and `pdc --help` shows " +
   "its verbs. Anything in your sandbox docs directory was put there to be " +
   "useful, not prescriptive — engage on your own terms.";
 

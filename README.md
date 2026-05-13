@@ -27,8 +27,8 @@ plugins are interchangeable.
 
 **Agency over attention. Opt-in posture by default.** The deployed
 agent wakes to silence. Discord activity flows only after they actively
-turn it on (`pi-discord-ctl set ping-mode push`,
-`pi-discord-ctl subscribe <id>`). Idle nudges, sleep, sysprompt slot —
+turn it on (`pdc set ping-mode push`,
+`pdc subscribe <id>`). Idle nudges, sleep, sysprompt slot —
 everything that shapes the agent's relationship to their own attention
 lives under their control via the ctl surface. The harness imposes no
 engagement.
@@ -52,7 +52,7 @@ engagement.
         ┌───────────────────────────────────────────┐
         │      pi-discord daemon                    │
         │  · routing, subscriptions, ping-mode      │  ← ~/.local/state/pi-discord/pi-discord.sock
-        │  · buffering, activity digest             │  ← pi-discord-ctl  (Discord verbs)
+        │  · buffering, activity digest             │  ← pdc  (Discord verbs)
         │  · pi-host client (deliver + events)      │
         │  · owns discli subprocess                 │
         └───────────────────────────────────────────┘
@@ -127,8 +127,8 @@ Interact via the CLI clients:
 bin/pi-ctl get-state
 bin/pi-ctl --help
 
-bin/pi-discord-ctl get-state
-bin/pi-discord-ctl --help
+bin/pdc get-state
+bin/pdc --help
 ```
 
 `bin/` symlinks resolve to the two packages' bin scripts; both binaries
@@ -152,10 +152,10 @@ sysprompt slot. The agent reads welcome.md + skills/, then chooses
 what to engage with:
 
 ```bash
-pi-discord-ctl set ping-mode push
-pi-discord-ctl channels
-pi-discord-ctl subscribe 1503391358076059762   # #off-topic
-pi-discord-ctl set digest-mode follow_up
+pdc set ping-mode push
+pdc channels
+pdc subscribe 1503391358076059762   # #off-topic
+pdc set digest-mode follow_up
 ```
 
 Some time later, a Discord ping arrives:
@@ -209,10 +209,10 @@ packages/
     src/              discli-io, routing, buffering, digest, missed-pings,
                       formatting, pi-host-client, control-server, protocol,
                       daemon, ctl, state
-    bin/pi-discord-ctl
+    bin/pdc
     third_party/      discli (Quiterion fork submodule, disclaw-patches branch)
 scripts/              start-host, start-discord, start-all, restart-*, dev-test
-docs/agent/           agent-facing skills (pi-ctl, pi-discord-ctl, orientation)
+docs/agent/           agent-facing skills (pi-ctl, pdc, orientation)
 docs/dev/             design notes (architecture.md, next_steps.md, welcome.testing.md)
 bin/                  workspace-level symlinks to the two ctl binaries
 ```

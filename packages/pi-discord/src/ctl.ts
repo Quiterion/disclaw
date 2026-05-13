@@ -1,5 +1,5 @@
 /**
- * pi-discord-ctl — CLI client for the pi-discord daemon.
+ * pdc — CLI client for the pi-discord daemon.
  *
  * Each invocation opens a fresh socket connection, sends one request,
  * prints the response, and exits. Exit 0 on ok=true, 1 otherwise.
@@ -31,63 +31,63 @@ function resolveSocketPath(): string {
   return SOCKET_PATH;
 }
 
-const HELP_TEXT = `pi-discord-ctl — your interface to the pi-discord daemon.
+const HELP_TEXT = `pdc — your interface to the pi-discord daemon.
 
 Health & state:
-  pi-discord-ctl ping                           health check
-  pi-discord-ctl status                         slim view: subscriptions,
+  pdc ping                           health check
+  pdc status                         slim view: subscriptions,
                                                 ping-mode, digest-mode,
                                                 digest count, missed-pings
                                                 count, pi-host connection.
                                                 What you usually want on
                                                 cold-start.
-  pi-discord-ctl get-state                      full snapshot (daemon meta +
+  pdc get-state                      full snapshot (daemon meta +
                                                 pi-host link state too)
 
 Discord — finding channels:
-  pi-discord-ctl channels                       list channels visible to the bot
+  pdc channels                       list channels visible to the bot
 
 Discord — subscriptions (which channels you see ambient messages from):
-  pi-discord-ctl subscribe <channel_id>         see ambient messages from this channel
-  pi-discord-ctl unsubscribe <channel_id>       stop seeing them
-  pi-discord-ctl list                           list current subscriptions
+  pdc subscribe <channel_id>         see ambient messages from this channel
+  pdc unsubscribe <channel_id>       stop seeing them
+  pdc list                           list current subscriptions
 
 Discord — ping mode (how mentions/DMs reach you):
-  pi-discord-ctl set ping-mode push             interrupt next tool result with brief marker
-  pi-discord-ctl set ping-mode follow_up        deliver after current run finishes
-  pi-discord-ctl set ping-mode none             mute pings entirely
+  pdc set ping-mode push             interrupt next tool result with brief marker
+  pdc set ping-mode follow_up        deliver after current run finishes
+  pdc set ping-mode none             mute pings entirely
 
 Discord — activity digest (sidebar-like unread counts for unsubscribed channels):
-  pi-discord-ctl set digest-mode follow_up      piggyback digest on next flush
-  pi-discord-ctl set digest-mode none           no auto-delivery; query on demand
-  pi-discord-ctl digest                         show currently-accumulated digest (peek)
-  pi-discord-ctl digest ack                     mark all unread channels as read
-  pi-discord-ctl digest ack <channel_id>        mark just one channel as read
+  pdc set digest-mode follow_up      piggyback digest on next flush
+  pdc set digest-mode none           no auto-delivery; query on demand
+  pdc digest                         show currently-accumulated digest (peek)
+  pdc digest ack                     mark all unread channels as read
+  pdc digest ack <channel_id>        mark just one channel as read
 
 Discord — missed pings (review pings dropped while ping-mode = none):
-  pi-discord-ctl missed-pings                   show all missed pings (most recent last)
-  pi-discord-ctl missed-pings <N>               show only the last N entries
-  pi-discord-ctl missed-pings clear             wipe the missed-pings log
+  pdc missed-pings                   show all missed pings (most recent last)
+  pdc missed-pings <N>               show only the last N entries
+  pdc missed-pings clear             wipe the missed-pings log
 
 Discord — reading + writing:
-  pi-discord-ctl history <channel_id> [limit]   read recent messages from a channel
-  pi-discord-ctl send <channel_id> <content>           send a message
-  pi-discord-ctl send --quiet <channel_id> <content>   ditto, print just the jump URL
-  pi-discord-ctl send <channel_id> --stdin             read content from stdin
+  pdc history <channel_id> [limit]   read recent messages from a channel
+  pdc send <channel_id> <content>           send a message
+  pdc send --quiet <channel_id> <content>   ditto, print just the jump URL
+  pdc send <channel_id> --stdin             read content from stdin
                                                        (heredoc / pipe — sidesteps
                                                         shell-quoting issues for
                                                         multi-line, backticks, $vars)
-  pi-discord-ctl typing <channel_id> [dur]      show "is typing…" in a channel
+  pdc typing <channel_id> [dur]      show "is typing…" in a channel
                                                 (auto-stops after dur, default 60s;
                                                  implicitly stops on send)
-  pi-discord-ctl typing stop <channel_id>       explicit stop
-  pi-discord-ctl whois <name>                   resolve a username/nickname to user_id(s)
+  pdc typing stop <channel_id>       explicit stop
+  pdc whois <name>                   resolve a username/nickname to user_id(s)
                                                 so you can construct a <@user_id> mention
-  pi-discord-ctl whois <name> --guild <id>      scope the search to one guild
-  pi-discord-ctl react   <channel_id> <message_id> <emoji>
+  pdc whois <name> --guild <id>      scope the search to one guild
+  pdc react   <channel_id> <message_id> <emoji>
                                                 add an emoji reaction (lighter than a reply;
                                                  emoji = unicode 👍 or :name: for custom)
-  pi-discord-ctl unreact <channel_id> <message_id> <emoji>
+  pdc unreact <channel_id> <message_id> <emoji>
                                                 retract a reaction
 
 For agent self-admin (sysprompt, sleep, idle-nudge timeout), use \`pi-ctl\`.
@@ -126,13 +126,13 @@ function parseArgs(argv: string[]): DiscordCtlRequest & { _quiet?: boolean } {
 
     case "subscribe": {
       const channel_id = rest[0];
-      if (!channel_id) die("usage: pi-discord-ctl subscribe <channel_id>");
+      if (!channel_id) die("usage: pdc subscribe <channel_id>");
       return { cmd: "subscribe", req_id: reqId, channel_id };
     }
 
     case "unsubscribe": {
       const channel_id = rest[0];
-      if (!channel_id) die("usage: pi-discord-ctl unsubscribe <channel_id>");
+      if (!channel_id) die("usage: pdc unsubscribe <channel_id>");
       return { cmd: "unsubscribe", req_id: reqId, channel_id };
     }
 
@@ -143,7 +143,7 @@ function parseArgs(argv: string[]): DiscordCtlRequest & { _quiet?: boolean } {
     case "set": {
       const key = rest[0];
       const value = rest[1];
-      if (!key) die("usage: pi-discord-ctl set <key> <value>  (try --help)");
+      if (!key) die("usage: pdc set <key> <value>  (try --help)");
       if (key === "ping-mode") {
         if (value !== "push" && value !== "follow_up" && value !== "none") {
           die("ping-mode must be one of: push, follow_up, none");
@@ -174,7 +174,7 @@ function parseArgs(argv: string[]): DiscordCtlRequest & { _quiet?: boolean } {
       if (rest.length === 0) return { cmd: "missed-pings", req_id: reqId };
       const limit = parseInt(rest[0]!, 10);
       if (Number.isNaN(limit) || limit < 1) {
-        die("usage: pi-discord-ctl missed-pings [<N> | clear]");
+        die("usage: pdc missed-pings [<N> | clear]");
       }
       return { cmd: "missed-pings", req_id: reqId, limit };
     }
@@ -192,8 +192,8 @@ function parseArgs(argv: string[]): DiscordCtlRequest & { _quiet?: boolean } {
 
       if (!channel_id || !content) {
         die(
-          "usage: pi-discord-ctl send [--quiet] <channel_id> <content...>\n" +
-            "       pi-discord-ctl send [--quiet] <channel_id> --stdin    (heredoc / pipe)",
+          "usage: pdc send [--quiet] <channel_id> <content...>\n" +
+            "       pdc send [--quiet] <channel_id> --stdin    (heredoc / pipe)",
         );
       }
       return {
@@ -207,7 +207,7 @@ function parseArgs(argv: string[]): DiscordCtlRequest & { _quiet?: boolean } {
 
     case "history": {
       const channel_id = rest[0];
-      if (!channel_id) die("usage: pi-discord-ctl history <channel_id> [limit]");
+      if (!channel_id) die("usage: pdc history <channel_id> [limit]");
       const limit = rest[1] ? parseInt(rest[1], 10) : undefined;
       if (limit !== undefined && Number.isNaN(limit)) {
         die("history limit must be an integer");
@@ -226,7 +226,7 @@ function parseArgs(argv: string[]): DiscordCtlRequest & { _quiet?: boolean } {
       const message_id = rest[1];
       const emoji = rest[2];
       if (!channel_id || !message_id || !emoji) {
-        die(`usage: pi-discord-ctl ${cmd} <channel_id> <message_id> <emoji>`);
+        die(`usage: pdc ${cmd} <channel_id> <message_id> <emoji>`);
       }
       return { cmd, req_id: reqId, channel_id, message_id, emoji };
     }
@@ -241,20 +241,20 @@ function parseArgs(argv: string[]): DiscordCtlRequest & { _quiet?: boolean } {
         args.splice(gIdx, 2);
       }
       const name = args[0];
-      if (!name) die("usage: pi-discord-ctl whois <name> [--guild <guild_id>]");
+      if (!name) die("usage: pdc whois <name> [--guild <guild_id>]");
       return { cmd: "whois", req_id: reqId, name, ...(guild_id ? { guild_id } : {}) };
     }
 
     case "typing": {
       if (rest[0] === "stop") {
         const channel_id = rest[1];
-        if (!channel_id) die("usage: pi-discord-ctl typing stop <channel_id>");
+        if (!channel_id) die("usage: pdc typing stop <channel_id>");
         return { cmd: "typing-stop", req_id: reqId, channel_id };
       }
       const channel_id = rest[0];
       if (!channel_id) {
         die(
-          "usage: pi-discord-ctl typing <channel_id> [duration]  OR  pi-discord-ctl typing stop <channel_id>",
+          "usage: pdc typing <channel_id> [duration]  OR  pdc typing stop <channel_id>",
         );
       }
       const durArg = rest[1];
@@ -263,7 +263,7 @@ function parseArgs(argv: string[]): DiscordCtlRequest & { _quiet?: boolean } {
         try {
           const parsed = parseDuration(durArg);
           if (parsed === null) {
-            die("typing duration cannot be 'off' — use `pi-discord-ctl typing stop <channel_id>` instead");
+            die("typing duration cannot be 'off' — use `pdc typing stop <channel_id>` instead");
           }
           duration_ms = parsed;
         } catch (err: any) {
@@ -284,7 +284,7 @@ function parseArgs(argv: string[]): DiscordCtlRequest & { _quiet?: boolean } {
 }
 
 function die(msg: string): never {
-  process.stderr.write(`pi-discord-ctl: ${msg}\n`);
+  process.stderr.write(`pdc: ${msg}\n`);
   process.exit(1);
 }
 
