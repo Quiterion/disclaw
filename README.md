@@ -16,19 +16,13 @@ Two packages today:
   Discord events to pi-host (subscriptions, ping mode, activity
   digest), and exposes its own ctl for Discord verbs.
 
-The split is the point. **pi-host has no opinion about Discord.** It's
-a generic continuity layer for pi. The Discord bridge is "the first
-plugin"; a future Slack or IRC or webhook bridge would slot in the same
-way — connect to pi-host's socket, subscribe to events, deliver via
-`prompt`/`follow-up`/`steer`. The supervisor stays constant; the
-plugins are interchangeable.
 
 ## Design ethos
 
 **Agency over attention. Opt-in posture by default.** The deployed
 agent wakes to silence. Discord activity flows only after they actively
 turn it on (`pdc set ping-mode push`,
-`pdc subscribe <id>`). Idle nudges, sleep, sysprompt slot —
+`pdc subscribe <id>`). Idle nudges, sleep, system prompt —
 everything that shapes the agent's relationship to their own attention
 lives under their control via the ctl surface. The harness imposes no
 engagement.
@@ -162,13 +156,19 @@ Some time later, a Discord ping arrives:
 
 ```
 <discord>
-<time>2026-05-12 09:14</time>
+<time>2026-05-12 20:54</time>
 
-<ping author="quiterion" uid="518777968508665866" server="quiterion's server" channel="#off-topic" at="09:14" id="1503688861329657858">
-hey, can you summarize the #general thread from earlier?
+<ping author="alice" uid="518777968508665866" server="quiterion's server" channel="#off-topic" at="20:54" id="1503...">
+hey opus, can you take a look at this?
 </ping>
 
-<digest>[unread] #random: 2</digest>
+<channel server="quiterion's server" name="#general">
+<msg author="alice" at="20:50" id="1503...">hey, around?</msg>
+<msg author="bob" at="20:51" id="1503...">I think they're afk</msg>
+<msg author="alice" at="20:54" id="1503...">👋</msg>
+</channel>
+
+<digest>[unread] #help: 3, #random: 12</digest>
 </discord>
 ```
 
@@ -216,16 +216,6 @@ docs/agent/           agent-facing skills (pi-ctl, pdc, orientation)
 docs/dev/             design notes (architecture.md, next_steps.md, welcome.testing.md)
 bin/                  workspace-level symlinks to the two ctl binaries
 ```
-
-## Status
-
-Greenfield as of the pi-host / pi-discord split. The prior single-
-daemon project (named "disclaw") landed slices A–D plus a polish pass
-covering XML message format, reactions, typing, attachments, send-from-
-stdin, channel-name resolution, restart ergonomics, and per-(provider,
-model) session tracking. All of that survives the split; the
-architectural change here is exclusively in how the components are
-factored and how they speak to each other.
 
 See `docs/dev/architecture.md` for the design details and
 `docs/dev/next_steps.md` for what's done vs. likely-next.
