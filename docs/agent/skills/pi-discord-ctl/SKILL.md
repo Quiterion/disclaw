@@ -11,6 +11,12 @@ it talks to the daemon over a Unix socket. Agent self-administration
 (sysprompt slot, sleep, idle-nudge timeout) lives in `pi-ctl` — see
 `skills/pi-ctl/SKILL.md`.
 
+The socket is resolved in the same order as pi-ctl:
+`$PI_DISCORD_RUNTIME_DIR/pi-discord.sock` (strict) →
+`~/.local/state/pi-discord/pi-discord.sock` → `$PWD/.pi-discord/pi-discord.sock`.
+The cwd fallback covers fresh bash subprocesses that didn't inherit
+the env var.
+
 ## Health & state
 
 ```

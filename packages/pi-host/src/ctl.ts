@@ -12,10 +12,37 @@
  */
 import { connect, type Socket } from "node:net";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { attachJsonlLineReader, serializeJsonLine, parseDuration } from "pi-shared";
 import { SOCKET_PATH } from "./state.js";
 import type { HostRequest, HostResponse } from "./protocol.js";
+
+/**
+ * Resolve the socket to connect to. Layered fallback:
+ *
+ *   1. PI_HOST_RUNTIME_DIR env set → use SOCKET_PATH strictly (the
+ *      operator told us where to look; failing loudly when wrong is
+ *      better than silently picking something else).
+ *   2. Default user-level socket exists → use it (the common case).
+ *   3. `$PWD/.pi-host/pi-host.sock` exists → use it. Makes the skill
+ *      doc's "Run from any cwd" claim literally true when an
+ *      isolated daemon is rooted in the current directory (e.g.
+ *      dev-test.sh's sandbox) and the agent's bash subprocess
+ *      doesn't carry forward an `export PI_HOST_RUNTIME_DIR=...`.
+ *   4. Nothing found → return SOCKET_PATH so the "is daemon
+ *      running?" error points at the expected user-level location.
+ *
+ * The daemon itself uses SOCKET_PATH strictly (no fallback) — the
+ * fallback only kicks in for ctl connect attempts.
+ */
+function resolveSocketPath(): string {
+  if (process.env.PI_HOST_RUNTIME_DIR) return SOCKET_PATH;
+  if (existsSync(SOCKET_PATH)) return SOCKET_PATH;
+  const cwdSocket = join(process.cwd(), ".pi-host", "pi-host.sock");
+  if (existsSync(cwdSocket)) return cwdSocket;
+  return SOCKET_PATH;
+}
 
 const HELP_TEXT = `pi-ctl — your interface to the pi-host daemon.
 
@@ -132,9 +159,9 @@ function die(msg: string): never {
   process.exit(1);
 }
 
-async function send(req: HostRequest): Promise<HostResponse> {
+async function send(req: HostRequest, socketPath: string): Promise<HostResponse> {
   return await new Promise<HostResponse>((resolve, reject) => {
-    const sock: Socket = connect(SOCKET_PATH);
+    const sock: Socket = connect(socketPath);
     let resolved = false;
     sock.on("error", (err) => {
       if (!resolved) reject(err);
@@ -160,15 +187,20 @@ async function send(req: HostRequest): Promise<HostResponse> {
 
 async function main(): Promise<void> {
   const req = parseArgs(process.argv.slice(2));
+  const socketPath = resolveSocketPath();
   let resp: HostResponse;
   try {
-    resp = await send(req);
+    resp = await send(req, socketPath);
   } catch (err: any) {
     if (err?.code === "ENOENT") {
-      die(`socket not found at ${SOCKET_PATH} — is pi-host running?`);
+      const cwdHint =
+        socketPath === SOCKET_PATH && !process.env.PI_HOST_RUNTIME_DIR
+          ? ` (also looked for $PWD/.pi-host/pi-host.sock; set PI_HOST_RUNTIME_DIR to point elsewhere)`
+          : "";
+      die(`socket not found at ${socketPath}${cwdHint} — is pi-host running?`);
     }
     if (err?.code === "ECONNREFUSED") {
-      die(`connection refused at ${SOCKET_PATH} — pi-host not accepting connections`);
+      die(`connection refused at ${socketPath} — pi-host not accepting connections`);
     }
     die(err?.message ?? String(err));
   }

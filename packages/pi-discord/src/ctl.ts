@@ -12,10 +12,24 @@
  */
 import { connect, type Socket } from "node:net";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { attachJsonlLineReader, serializeJsonLine, parseDuration } from "pi-shared";
 import { SOCKET_PATH } from "./state.js";
 import type { DiscordCtlRequest, DiscordCtlResponse } from "./protocol.js";
+
+/**
+ * Resolve the socket to connect to. See pi-host/src/ctl.ts for the
+ * full rationale; same layered fallback as pi-ctl, looking at
+ * `$PWD/.pi-discord/pi-discord.sock` as the cwd-local override.
+ */
+function resolveSocketPath(): string {
+  if (process.env.PI_DISCORD_RUNTIME_DIR) return SOCKET_PATH;
+  if (existsSync(SOCKET_PATH)) return SOCKET_PATH;
+  const cwdSocket = join(process.cwd(), ".pi-discord", "pi-discord.sock");
+  if (existsSync(cwdSocket)) return cwdSocket;
+  return SOCKET_PATH;
+}
 
 const HELP_TEXT = `pi-discord-ctl — your interface to the pi-discord daemon.
 
@@ -264,9 +278,9 @@ function die(msg: string): never {
   process.exit(1);
 }
 
-async function sendReq(req: DiscordCtlRequest): Promise<DiscordCtlResponse> {
+async function sendReq(req: DiscordCtlRequest, socketPath: string): Promise<DiscordCtlResponse> {
   return await new Promise<DiscordCtlResponse>((resolve, reject) => {
-    const sock: Socket = connect(SOCKET_PATH);
+    const sock: Socket = connect(socketPath);
     let resolved = false;
     sock.on("error", (err) => {
       if (!resolved) reject(err);
@@ -296,15 +310,20 @@ async function main(): Promise<void> {
   delete (parsed as any)._quiet;
   const req = parsed as DiscordCtlRequest;
 
+  const socketPath = resolveSocketPath();
   let resp: DiscordCtlResponse;
   try {
-    resp = await sendReq(req);
+    resp = await sendReq(req, socketPath);
   } catch (err: any) {
     if (err?.code === "ENOENT") {
-      die(`socket not found at ${SOCKET_PATH} — is pi-discord running?`);
+      const cwdHint =
+        socketPath === SOCKET_PATH && !process.env.PI_DISCORD_RUNTIME_DIR
+          ? ` (also looked for $PWD/.pi-discord/pi-discord.sock; set PI_DISCORD_RUNTIME_DIR to point elsewhere)`
+          : "";
+      die(`socket not found at ${socketPath}${cwdHint} — is pi-discord running?`);
     }
     if (err?.code === "ECONNREFUSED") {
-      die(`connection refused at ${SOCKET_PATH} — pi-discord not accepting connections`);
+      die(`connection refused at ${socketPath} — pi-discord not accepting connections`);
     }
     die(err?.message ?? String(err));
   }
