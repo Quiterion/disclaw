@@ -1,0 +1,19 @@
+{
+  "name": "pi-host",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "pi-ctl": "./bin/pi-ctl"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty",
+    "daemon": "node --import tsx src/daemon.ts",
+    "ctl": "node --import tsx src/ctl.ts"
+  },
+  "dependencies": {
+    "pi-shared": "*",
+    "pi-acm": "file:./third_party/pi-acm"
+  }
+}

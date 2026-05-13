@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# pi-ctl wrapper — invokable from any cwd.
+#
+# Resolves the package root from this script's location. Prefers the
+# built JS at dist/ctl.js (zero runtime deps in the sandbox); falls
+# back to tsx for dev convenience when dist/ is absent (fresh clone
+# before `npm run build`).
+set -euo pipefail
+# Resolve symlinks so workspace-root bin/pi-ctl (a symlink to this file)
+# still points us at the right package root.
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+PKG_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+if [[ -f "$PKG_ROOT/dist/ctl.js" ]]; then
+  exec node "$PKG_ROOT/dist/ctl.js" "$@"
+fi
+exec node --import tsx "$PKG_ROOT/src/ctl.ts" "$@"

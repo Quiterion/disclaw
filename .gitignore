@@ -2,13 +2,18 @@
 **/__pycache__
 **/node_modules
 **/dist
+**/tsconfig.tsbuildinfo
 *.log
 
-# Local daemon runtime state (state.json, sysprompt.txt, disclaw.sock,
-# missed-pings.log) when the daemon's started from a project-root cwd
-# with the default DISCLAW_RUNTIME_DIR. Test runs with their own
-# DISCLAW_RUNTIME_DIR (e.g. dev-test.sh's scratch dir) live elsewhere.
+# Stale runtime dir from the pre-monorepo daemon (DISCLAW_RUNTIME_DIR =
+# ~/.disclaw by default). Harmless; safe to delete.
 .disclaw/
+
+# Per-package isolated runtime dirs sometimes used during dev (e.g.
+# dev-test.sh seeds these into a timestamped TEST_DIR — that lives
+# under ~/pi-host-tests, but a stray relative path could land here).
+.pi-host/
+.pi-discord/
 
 # Agent-written artifacts that may land in cwd (e.g. feedback.md from
 # a testing instance writing per welcome.testing.md). Track manually

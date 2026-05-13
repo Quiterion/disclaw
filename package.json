@@ -1,18 +1,18 @@
 {
-  "name": "disclaw",
+  "name": "pi-host-workspace",
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "workspaces": [
+    "packages/shared",
+    "packages/pi-host",
+    "packages/pi-discord"
+  ],
   "scripts": {
-    "daemon": "node --import tsx --env-file=.env src/daemon.ts",
-    "ctl": "node --import tsx src/ctl.ts",
-    "typecheck": "tsc --noEmit",
-    "build": "tsc",
-    "clean": "rm -rf dist",
-    "test": "node --import tsx --test test/**/*.test.ts"
-  },
-  "dependencies": {
-    "pi-acm": "file:./third_party/pi-acm"
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "clean": "rm -rf packages/*/dist"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

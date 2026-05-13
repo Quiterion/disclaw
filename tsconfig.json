@@ -1,19 +1,9 @@
 {
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "lib": ["ES2023"],
-    "strict": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "noUncheckedIndexedAccess": true,
-    "resolveJsonModule": true,
-    "rootDir": "src",
-    "outDir": "dist",
-    "declaration": false,
-    "sourceMap": true
-  },
-  "include": ["src/**/*"],
-  "exclude": ["test/**/*", "dist/**/*", "node_modules"]
+  "extends": "./tsconfig.base.json",
+  "files": [],
+  "references": [
+    { "path": "./packages/shared" },
+    { "path": "./packages/pi-host" },
+    { "path": "./packages/pi-discord" }
+  ]
 }
