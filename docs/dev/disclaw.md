@@ -92,8 +92,13 @@ pi tools back. See git history under "slice 3.5" for the rationale.
 
 ## Session model
 
-- **One pi session, forever.** The router never restarts pi as part of normal
-  operation. Pi handles its own rolling-window compaction; we don't touch it.
+- **One pi session per (provider, model), forever.** The router never
+  restarts pi as part of normal operation, and pi handles its own
+  rolling-window compaction — we don't touch it. Sessions are tracked
+  in a per-model registry (see "State"), so switching models with
+  `DISCLAW_MODEL=…` between daemon restarts parks the previous model's
+  session under its key and resumes (or starts fresh) the new model's
+  — swapping between models doesn't destroy continuity for either.
 - **No per-channel sessions.** The agent sees all subscribed channels in a
   single thread of consciousness, rather than parallel split-personality
   contexts. They can switch attention via tool calls (subscribe/unsubscribe).
@@ -605,7 +610,7 @@ This section's shape changed twice during workshopping:
 | `digest_mode` ({follow_up,none}) | yes | yes |
 | `idle_nudge_timeout_ms` (number\|null) | yes | yes |
 | `sysprompt` (str, mirrored to `$RUNTIME_DIR/sysprompt.txt` for the pi extension) | yes | yes |
-| `last_session_file` (path the daemon last observed pi writing to) | yes | yes — drives `--session` resume on next start |
+| `sessions` (`Record<"<provider>:<model>", path>`; per-model registry of pi session-file paths) | yes | yes — current model's entry drives `--session` resume on next start; other entries are parked sessions |
 | `provider` / `model` / `model_name` (deploy-config) | yes | yes — fallback for `start.sh` when env isn't set |
 | `$RUNTIME_DIR/missed-pings.log` (JSONL, append-only) | yes (its own file) | yes |
 | event buffers + digest accumulator | no (in-memory) | lost on restart |
@@ -613,15 +618,29 @@ This section's shape changed twice during workshopping:
 | typing auto-stop timers (per-channel) | no (in-memory) | discli's typing loops also die on daemon exit |
 | `host.alive` / `host.exit` (pi process status) | no | reset on each daemon launch |
 
-Session resume mechanism:
+Session resume mechanism (per-model):
 
-1. After every `agent_end`, daemon RPCs pi `get_state` and reads
+The daemon tracks pi session files keyed by `<provider>:<model>`, so
+swapping `DISCLAW_MODEL` between restarts doesn't overwrite or lose the
+prior model's transcript. The current `(provider, model)` is computed
+into a key on startup and used for the rest of the daemon's life.
+
+1. On daemon start: if `state.sessions[key]` is set, daemon passes
+   `--session <path>` to pi. Otherwise pi starts fresh and begins
+   writing a new session file.
+2. After every `agent_end`, daemon RPCs pi `get_state` and reads
    `sessionFile`. If the file exists on disk and differs from
-   `last_session_file`, daemon updates state.json.
-2. On daemon start, if `last_session_file` is set and the file
-   exists, daemon passes `--session <path>` to pi. Pi resumes the
-   transcript.
-3. If the path is missing or null, pi starts fresh.
+   `state.sessions[key]`, daemon writes the new path under the same
+   key.
+3. Other models' entries are left untouched — they're parked
+   sessions, resumable on a future restart with the matching
+   `DISCLAW_MODEL`.
+
+A legacy `last_session_file` field (single path, no per-model key) is
+recognized read-only and migrated into `sessions[<currentKey>]` on
+first startup with this schema, but only when the recorded
+provider/model match what's running — otherwise it's left in place
+until the matching model runs again, then cleared.
 
 Resilience: tier 1 — pi process exit is detected and surfaced
 (`pi.alive: false` in `get-state`, loud `[error]` in daemon log,
@@ -844,6 +863,7 @@ Kept here for the historical thread:
 | decision | choice | rationale |
 |---|---|---|
 | session shape | one rolling Agent for everything | preserves continuity across channels; matches "ship of Theseus" goal |
+| sessions are per-(provider, model) | one persistent session per model, parked under a registry key when the model isn't currently running | model swaps are operator-driven via `DISCLAW_MODEL`; without per-model tracking, a swap either silently loses the prior model's transcript or makes the new model resume the wrong one |
 | daemon buffers, not the agent | per-mode buffers in the daemon, single batched call per flush | enables delivery-time formatting (relative timestamps, batch framing) |
 | ping ≠ subscription | pings delivered always, but never auto-subscribe | keeps engagement decision with the agent |
 | `push` is for pings only, in compact form | non-pings (channel msgs, digest) never push; pings push as compact `[ping]` markers between pi-internal turns | agent runs can last hours, so pings need real-time-ish delivery for human-Discord parity — but as small markers, not content dumps |

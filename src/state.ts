@@ -52,12 +52,24 @@ export interface RouterState {
    */
   idle_nudge_timeout_ms: number | null;
   /**
-   * Path to the most recent pi session file the daemon observed.
-   * On daemon restart, we pass this as `--session <path>` to pi so the
-   * agent's transcript continues seamlessly across the restart instead
-   * of starting fresh. null on first run.
+   * Pi session files keyed by `<provider>:<model>` (see {@link sessionKey}).
+   * Each entry is the most recent session-file path the daemon observed
+   * while running that provider/model. On daemon startup, the entry for
+   * the current provider/model is passed as `--session <path>` to pi so
+   * the transcript continues across restarts. Switching models with
+   * `DISCLAW_MODEL=…` parks the old model's session under its key rather
+   * than overwriting it, so swapping back later resumes where you left
+   * off.
    */
-  last_session_file: string | null;
+  sessions: Record<string, string>;
+  /**
+   * @deprecated Legacy single-session field, superseded by {@link sessions}.
+   * Migrated into `sessions[<provider>:<model>]` by the daemon on first
+   * startup with this schema (only when the recorded provider/model
+   * matches the running one — otherwise left in place until the matching
+   * model runs again). Never written by current code; read for migration.
+   */
+  last_session_file?: string | null;
 }
 
 const DEFAULT_STATE: RouterState = {
@@ -67,8 +79,13 @@ const DEFAULT_STATE: RouterState = {
   ping_mode: "none",
   digest_mode: "none",
   idle_nudge_timeout_ms: 60_000,
-  last_session_file: null,
+  sessions: {},
 };
+
+/** Registry key for per-model session tracking. */
+export function sessionKey(provider: string, model: string): string {
+  return `${provider}:${model}`;
+}
 
 function ensureDir(path: string): void {
   mkdirSync(path, { recursive: true, mode: 0o700 });

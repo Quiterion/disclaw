@@ -19,7 +19,7 @@
 import { existsSync } from "node:fs";
 import { AgentHost } from "./agent-host.js";
 import { ControlServer, SOCKET_PATH } from "./control.js";
-import { loadState, saveState, type RouterState } from "./state.js";
+import { loadState, saveState, sessionKey, type RouterState } from "./state.js";
 import { maybeBootstrap } from "./bootstrap.js";
 import { DiscliProcess } from "./discli-io.js";
 import { routeDiscordEvent, type DiscliMessageEvent } from "./routing.js";
@@ -68,26 +68,58 @@ async function main(): Promise<void> {
   const bootstrap = maybeBootstrap(state);
   state = bootstrap.state;
   if (!wasInitialized) log(`first-run bootstrap: cwd=${process.cwd()}`);
+  // Sessions are tracked per-(provider,model), so swapping models with
+  // DISCLAW_MODEL=… parks the old model's session under its key instead
+  // of stomping it. Migration: if the legacy single-session field is
+  // populated and the previously-recorded provider/model match what
+  // we're starting with, fold its value into the new map under that
+  // key. Otherwise leave it alone — it belongs to whatever model wrote
+  // it, and we'll migrate when that model runs again.
+  const currentSessionKey = sessionKey(PROVIDER, MODEL);
+  const sessions = { ...state.sessions };
+  const legacy = state.last_session_file ?? null;
+  const shouldMigrate =
+    legacy !== null &&
+    state.provider === PROVIDER &&
+    state.model === MODEL &&
+    !sessions[currentSessionKey];
+  if (shouldMigrate) {
+    sessions[currentSessionKey] = legacy!;
+    log(`[session] migrated legacy last_session_file into sessions[${currentSessionKey}]`);
+  }
   // Persist deploy-config (provider/model/model_name) so a cold restart
   // with no running daemon to inherit env from can recover identity
-  // from disk via start.sh's state.json fallback.
-  state = { ...state, provider: PROVIDER, model: MODEL, model_name: MODEL_NAME };
+  // from disk via start.sh's state.json fallback. Also clear the legacy
+  // field once we've either migrated it or decided not to touch it
+  // this run.
+  state = {
+    ...state,
+    provider: PROVIDER,
+    model: MODEL,
+    model_name: MODEL_NAME,
+    sessions,
+    ...(shouldMigrate ? { last_session_file: null } : {}),
+  };
   saveState(state);
 
   // ── Build the agent ────────────────────────────────────────────────
   // Pi inherits this process's cwd. Extensions (our sysprompt + pi-acm)
   // are loaded by absolute path in AgentHost so they don't depend on
-  // cwd. Session resumption: if we have a recorded session file from a
-  // previous daemon run, pass it so pi continues that transcript.
-  if (state.last_session_file) {
-    log(`[session] resuming from ${state.last_session_file}`);
+  // cwd. Session resumption: if we have a session file recorded under
+  // the current (provider, model) key, pass it so pi continues that
+  // transcript.
+  const resumeFile = state.sessions[currentSessionKey] ?? null;
+  if (resumeFile) {
+    log(`[session] resuming ${currentSessionKey} from ${resumeFile}`);
+  } else {
+    log(`[session] no prior session for ${currentSessionKey}; pi will start fresh`);
   }
   const host = new AgentHost({
     provider: PROVIDER,
     modelId: MODEL,
     modelName: MODEL_NAME,
     initialSysprompt: state.sysprompt,
-    resumeSessionFile: state.last_session_file,
+    resumeSessionFile: resumeFile,
   });
 
   // Tier 1 pi-exit visibility. Pi is the agent; if it exits we're a
@@ -176,10 +208,13 @@ async function main(): Promise<void> {
     try {
       const piState: any = await host.pi.send({ type: "get_state" });
       const sf: string | undefined = piState.data?.sessionFile;
-      if (sf && existsSync(sf) && sf !== state.last_session_file) {
-        state = { ...state, last_session_file: sf };
+      if (sf && existsSync(sf) && sf !== state.sessions[currentSessionKey]) {
+        state = {
+          ...state,
+          sessions: { ...state.sessions, [currentSessionKey]: sf },
+        };
         saveState(state);
-        log(`[session] tracking ${sf}`);
+        log(`[session] tracking ${sf} under ${currentSessionKey}`);
       }
     } catch {
       // pi not ready or has exited — not fatal
@@ -374,6 +409,7 @@ async function main(): Promise<void> {
             digest_mode: state.digest_mode,
             idle_nudge_timeout_ms: state.idle_nudge_timeout_ms,
             ...(sleep ? { sleep: { until_ms: sleep.until_ms } } : {}),
+            sessions: { ...state.sessions },
           },
         };
         // Augment with pi's RPC-side state if reachable.

@@ -8,12 +8,16 @@
 #
 # **Inherits the killed daemon's DISCLAW_* env vars** so a restart
 # preserves the runtime dir / model / model name from the running
-# daemon. Without this, a restart from an unrelated shell would silently
-# kill (e.g.) the test daemon at $TEST_DIR/.disclaw and start a fresh
-# one at the default ~/.disclaw with a different model — losing the
-# session and answering as the wrong agent. Reads /proc/$PID/environ
-# (Linux); if not readable, falls back to the operator's current env
-# with a warning.
+# daemon. Without this, a restart from an unrelated shell could
+# silently kill (e.g.) the test daemon at $TEST_DIR/.disclaw and start
+# a fresh one against the default ~/.disclaw — wrong state.json,
+# wrong sysprompt slot, wrong subscriptions; effectively a different
+# agent. (Sessions are tracked per-(provider, model) in state.json, so
+# a model swap alone — `DISCLAW_MODEL=opus bash scripts/restart.sh` —
+# parks the prior model's session rather than losing it. The
+# runtime-dir mismatch is the trap this guards against.) Reads
+# /proc/$PID/environ (Linux); if not readable, falls back to the
+# operator's current env with a warning.
 #
 # To override an inherited var, set it explicitly when invoking:
 #   DISCLAW_MODEL=claude-haiku-4-5 bash scripts/restart.sh

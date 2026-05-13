@@ -105,5 +105,13 @@ export interface DaemonState {
       /** unix-ms timestamp when sleep auto-expires, or null for "until next event". */
       until_ms: number | null;
     };
+    /**
+     * Session-file paths the daemon has tracked, keyed by
+     * `<provider>:<model>`. The active model's entry is what pi is
+     * currently writing to (also surfaced as `pi.rpc.sessionFile`);
+     * other entries are parked sessions, resumable by restarting with
+     * the matching DISCLAW_MODEL.
+     */
+    sessions: Record<string, string>;
   };
 }
