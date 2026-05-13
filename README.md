@@ -1,86 +1,167 @@
-# disclaw
+# pi-host workspace
 
-A long-running Discord-listening agent harness. Wraps
-[pi-coding-agent](https://github.com/mariozechner/pi-coding-agent)
-+ [pi-acm](https://github.com/earendil-works/pi-acm) (context
-management) + [discli](https://github.com/DevRohit06/discli) (Discord
-↔ JSONL bridge) behind a daemon with a Unix-socket control plane,
-giving an agent (typically another instance of Claude) explicit
-control over their own attention.
+A monorepo of small Node daemons that turn
+[pi-coding-agent](https://github.com/mariozechner/pi-coding-agent) into a
+long-running, self-administering agent — and let separate processes
+bridge it to external services.
 
-The design ethos is named in the doc: **agency over attention**,
- **opt-in posture by default**. The agent wakes to silence
-and chooses what to engage with. Every interruption is a choice the
-agent or the operator made.
+Two packages today:
 
-## Architecture
+- **[`pi-host`](packages/pi-host/)** — the supervisor. Owns one
+  `pi --mode rpc` subprocess plus its session, sysprompt slot,
+  idle-nudge timer, and sleep state. Exposes a Unix-socket RPC that
+  pi-ctl (CLI) and subscriber daemons (e.g. pi-discord) connect to.
+- **[`pi-discord`](packages/pi-discord/)** — the first bridge. Owns a
+  [discli](https://github.com/DevRohit06/discli) subprocess, routes
+  Discord events to pi-host (subscriptions, ping mode, activity
+  digest), and exposes its own ctl for Discord verbs.
 
-Three processes:
+The split is the point. **pi-host has no opinion about Discord.** It's
+a generic continuity layer for pi. The Discord bridge is "the first
+plugin"; a future Slack or IRC or webhook bridge would slot in the same
+way — connect to pi-host's socket, subscribe to events, deliver via
+`prompt`/`follow-up`/`steer`. The supervisor stays constant; the
+plugins are interchangeable.
+
+## Design ethos
+
+**Agency over attention. Opt-in posture by default.** The deployed
+agent wakes to silence. Discord activity flows only after they actively
+turn it on (`pi-discord-ctl set ping-mode push`,
+`pi-discord-ctl subscribe <id>`). Idle nudges, sleep, sysprompt slot —
+everything that shapes the agent's relationship to their own attention
+lives under their control via the ctl surface. The harness imposes no
+engagement.
+
+## Process topology
 
 ```
-                   ┌──────────────────┐
-                   │      daemon      │  Unix socket: $DISCLAW_RUNTIME_DIR/disclaw.sock
-                   │  (Node, our code)│  ← disclaw-ctl (CLI client)
-                   └────────┬─────────┘
-                            │
-                  ┌─────────┴─────────┐
-                  │                   │
-        spawn + JSONL        spawn + JSONL
-                  │                   │
-                  ▼                   ▼
-        ┌──────────────────┐  ┌──────────────────┐
-        │       pi         │  │     discli       │
-        │ (the LLM agent)  │  │ (Discord bridge) │
-        └──────────────────┘  └──────────────────┘
-                                       │
-                                       ▼
-                                   Discord
+                            pi (rpc, single owner of stdio)
+                                ▲
+                                │ JSONL
+                                ▼
+        ┌───────────────────────────────────────────┐
+        │      pi-host daemon                       │
+        │  · agent lifecycle (spawn, exit, restart) │  ← ~/.local/state/pi-host/pi-host.sock
+        │  · sysprompt slot + session registry      │  ← pi-ctl  (admin verbs)
+        │  · idle-nudge + sleep                     │  ← subscriber daemons
+        │  · outward RPC + event stream             │
+        └───────────────┬───────────────────────────┘
+                        │ subscribes via Unix socket
+                        ▼
+        ┌───────────────────────────────────────────┐
+        │      pi-discord daemon                    │
+        │  · routing, subscriptions, ping-mode      │  ← ~/.local/state/pi-discord/pi-discord.sock
+        │  · buffering, activity digest             │  ← pi-discord-ctl  (Discord verbs)
+        │  · pi-host client (deliver + events)      │
+        │  · owns discli subprocess                 │
+        └───────────────────────────────────────────┘
+                        │
+                        ▼
+                     Discord
 ```
 
-- **daemon** owns persistent state, routes inbound Discord events to
-  the agent, exposes a control plane over a Unix socket for the agent
-  (via `disclaw-ctl`-in-bash) and the operator
-- **pi** is the LLM agent loop. The daemon talks to it via
-  `pi --mode rpc` over JSONL. Pi handles the API call, tool execution,
-  session persistence, and pi-acm context management
-- **discli** is a separate subprocess that connects to Discord, emits
-  events as JSONL on stdout, and handles outbound actions
-  (send/react/typing/etc.) via JSONL on stdin
+- pi-host owns pi's stdio exclusively. No subscriber sees raw pi RPC —
+  pi-host exposes a stable, higher-level surface that re-emits pi
+  events (prefixed `pi:`) plus its own (`host:welcome`,
+  `host:pi_exit`, `host:nudge_fired`, `host:sleep_*`, etc.).
+- Deliver verbs (`prompt`, `follow-up`, `steer`) are pi-host's curated
+  subset of pi's RPC. Calling one auto-cancels any active sleep and
+  pending nudge before forwarding. The supervisor also smart-falls-back
+  when pi's state doesn't match the verb (e.g. `prompt` while pi is
+  streaming becomes a `follow-up`); the response's `delivered_as` field
+  announces the actual disposition.
+- pi-discord buffers Discord events per delivery mode, formats them
+  into `<discord>...</discord>` wrapped user messages with
+  `<ping>`/`<channel>`/`<digest>` sub-elements, and delivers via
+  pi-host's RPC. pi-host's own injected messages (bootstrap, idle
+  nudges) use a `<pi-host>...</pi-host>` wrap — distinct frames, two
+  origin sources.
 
-The agent's surface is `disclaw-ctl <verb>` invoked through pi's
-existing `bash` tool. Inbound Discord events are framed as XML-wrapped
-user messages. See `docs/agent/skills/disclaw-ctl/SKILL.md` for the
-agent-facing reference and `docs/dev/disclaw.md` for the full design.
+## Quick start
+
+```bash
+git clone --recurse-submodules <this-repo>
+cd <this-repo>
+npm install
+python3 -m venv .venv && .venv/bin/pip install -e packages/pi-discord/third_party/discli
+```
+
+Create `.env` at the workspace root:
+
+```
+DISCORD_BOT_TOKEN=<from https://discord.com/developers/applications>
+ANTHROPIC_API_KEY=<your key>
+```
+
+Start the daemons:
+
+```bash
+bash scripts/start-host.sh         # foreground (ctrl-c to stop)
+bash scripts/start-host.sh --bg    # background (logs go to runtime dir)
+bash scripts/start-discord.sh --bg # likewise
+bash scripts/start-all.sh          # both in background
+```
+
+Defaults to `~/.local/state/pi-host/` + `~/.local/state/pi-discord/`
+for runtime state and `claude-haiku-4-5` for the model. Override pi-
+host's model via env:
+
+```bash
+PI_HOST_MODEL=claude-opus-4-7 \
+PI_HOST_MODEL_NAME="Claude Opus 4.7" \
+  bash scripts/start-host.sh --bg
+```
+
+To restart in place (preserves session, inherits env from the running
+daemon):
+
+```bash
+bash scripts/restart-host.sh
+bash scripts/restart-discord.sh
+```
+
+Interact via the CLI clients:
+
+```bash
+bin/pi-ctl get-state
+bin/pi-ctl --help
+
+bin/pi-discord-ctl get-state
+bin/pi-discord-ctl --help
+```
+
+`bin/` symlinks resolve to the two packages' bin scripts; both binaries
+end up on the deployed agent's PATH via pi-host's PATH manipulation.
 
 ## Example session
 
-What disclaw looks like from the agent's side. After the daemon spawns
-pi, the agent's first user-message:
+What the agent sees on first wake. pi-host's bootstrap (the *only*
+prompt before anything else has connected):
 
 ```
-<disclaw>
+<pi-host>
 <time>2026-05-12 09:00</time>
 Hi. You're in a long-running agent harness. You are in
 `/home/claude/`. There is a welcome doc at `welcome.md`.
-</disclaw>
+</pi-host>
 ```
 
-State starts opt-in: `ping_mode=none`, no subscriptions, empty sysprompt
-slot. The agent reads `welcome.md` + `skills/disclaw-ctl/SKILL.md`, then
-chooses what to engage with via pi's `bash` tool:
+State starts opt-in: `ping-mode=none`, no subscriptions, empty
+sysprompt slot. The agent reads welcome.md + skills/, then chooses
+what to engage with:
 
 ```bash
-disclaw-ctl set ping-mode push
-disclaw-ctl channels
-disclaw-ctl subscribe 1503391358076059762   # #off-topic
-disclaw-ctl set digest-mode follow_up       # get unread msg counts
+pi-discord-ctl set ping-mode push
+pi-discord-ctl channels
+pi-discord-ctl subscribe 1503391358076059762   # #off-topic
+pi-discord-ctl set digest-mode follow_up
 ```
 
-Some time later, a Discord user mentions the bot. The agent's next
-user-message arrives wrapped, with one section per reason-it-reached-them:
+Some time later, a Discord ping arrives:
 
 ```
-<disclaw>
+<discord>
 <time>2026-05-12 09:14</time>
 
 <ping author="quiterion" uid="518777968508665866" server="quiterion's server" channel="#off-topic" at="09:14" id="1503688861329657858">
@@ -88,163 +169,71 @@ hey, can you summarize the #general thread from earlier?
 </ping>
 
 <digest>[unread] #random: 2</digest>
-</disclaw>
+</discord>
 ```
 
-Reply path — show typing while composing, fetch the channel they
-referenced, draft + send via stdin (sidesteps shell quoting for
-multi-line content):
+Two different framing tags — `<pi-host>` vs. `<discord>` — make it
+obvious where each message came from: the supervisor itself, or the
+Discord bridge. Future bridges add their own wrap (`<slack>`, etc.).
 
-```bash
-disclaw-ctl typing "#off-topic" 30s
-disclaw-ctl history "#off-topic" 50
-# ... read, compose ...
-disclaw-ctl send "#off-topic" --stdin <<'EOF'
-here's the gist (4 msgs over ~10 min):
-
-1. alice raised the migration question
-2. bob countered with the lock-contention concern
-3. ...
-EOF
-```
-
-A subsequent delivery combining a follow-up ping (with an image
-attachment), an ambient channel message, and the activity-digest
-tail — all in one user-message, three structurally-distinct sections:
-
-```
-<disclaw>
-<time>2026-05-12 09:20</time>
-
-<ping author="alice" uid="..." server="quiterion's server" channel="#off-topic" at="09:18" id="...">
-nice. one follow-up:
-<attachment filename="diagram.png" size="42130" url="https://cdn.discordapp.com/.../diagram.png"/>
-</ping>
-
-<channel server="quiterion's server" name="#off-topic">
-bob (09:19): looks good
-quiterion (09:20): thanks both
-</channel>
-
-<digest>[unread] #general: 2, #random: 7</digest>
-</disclaw>
-```
-
-After each `agent_end`, if no new events arrive within
-`idle-nudge-timeout` (default 60s), the agent gets a quiet nudge — so
-a stretch of silence doesn't pass without their attention, but the
-choice of what to do next stays theirs:
-
-```
-<disclaw>
-<time>2026-05-12 09:35</time>
-No new Discord activity since you last responded. Use `disclaw-ctl
-sleep` to wait until something happens, or use this time however you
-like.
-</disclaw>
-```
-
-Full verb reference: `docs/agent/skills/disclaw-ctl/SKILL.md`.
-
-## Quick start
-
-```bash
-git clone --recurse-submodules <this-repo>
-cd disclaw
-npm install
-python3 -m venv .venv && .venv/bin/pip install -e third_party/discli
-```
-
-Create `.env` with at minimum:
-
-```
-DISCORD_BOT_TOKEN=<from https://discord.com/developers/applications>
-ANTHROPIC_API_KEY=<your key>
-```
-
-Then start the daemon:
-
-```bash
-bash scripts/start.sh           # foreground (ctrl-c to stop)
-bash scripts/start.sh --bg      # background (logs to $RUNTIME_DIR/daemon.log)
-```
-
-Defaults to `~/.disclaw/` for runtime state and `claude-haiku-4-5` for
-the model. Override with env vars:
-
-```bash
-DISCLAW_RUNTIME_DIR=/tmp/test \
-DISCLAW_MODEL=claude-opus-4-7 \
-DISCLAW_MODEL_NAME="Claude Opus 4.7" \
-  bash scripts/start.sh --bg
-```
-
-To restart in place (preserves session, inherits env from the running
-daemon):
-
-```bash
-bash scripts/restart.sh         # forwards --bg if you want background
-```
-
-Interact via the CLI client (matching `DISCLAW_RUNTIME_DIR`):
-
-```bash
-disclaw-ctl ping
-disclaw-ctl get-state
-disclaw-ctl --help              # full verb reference
-```
+After each `agent_end`, if no new events arrive within the configured
+idle-nudge timeout, pi-host sends a quiet nudge so silence doesn't
+pass without the agent's attention. The choice of what to do next
+stays theirs.
 
 ## Testing
 
 ```bash
-npm test                                   # TS unit tests
-bash scripts/dev-test.sh                   # spawn an Opus 4.7 instance in
-                                           # an isolated test cwd, with the
-                                           # testing-variant welcome
+npm test                                   # all TS unit tests
+bash scripts/dev-test.sh                   # spawn an Opus 4.7 instance
+                                           # in an isolated test cwd
 ```
 
-The dev-test launcher creates a fresh timestamped scratch dir under
-`~/disclaw-tests/<ts>/`, seeds it with the agent-facing docs, and
-launches the daemon there with isolated state — useful for getting
-feedback "from inside" without polluting your regular runtime.
+`dev-test.sh` creates a fresh `~/pi-host-tests/<timestamp>/` scratch
+dir, seeds it with the agent-facing docs, and launches both daemons
+with isolated state — useful for getting feedback "from inside"
+without touching your real runtime dirs.
 
 ## Layout
 
 ```
-src/                 daemon, ctl, agent-host, formatting, routing, etc.
-test/                node:test unit tests (formatting, routing, digest, missed-pings)
-scripts/             start.sh, restart.sh, dev-test.sh
-.pi/extensions/      sysprompt extension that REPLACES pi's default sysprompt
-                     with our floor + agent-managed slot
-docs/agent/          agent-facing docs (SKILL.md, orientation.example.md)
-docs/dev/            design doc (disclaw.md), next_steps.md, drafts
-third_party/discli/  vendored Discord ↔ JSONL bridge (Quiterion fork w/
-                     humanize_mentions + member_search + #name-channel
-                     resolution patches on disclaw-patches branch)
-third_party/pi-acm/  vendored sliding-window context manager (single
-                     local "whisper patch" stripping per-run
-                     <context-status> tag)
-third_party/pi/      pi-coding-agent (clean upstream)
-bin/disclaw-ctl      shim wrapper — runs dist/ctl.js with node
+packages/
+  shared/             jsonl framing + duration parsing (no business logic)
+  pi-host/
+    src/              agent-host, pi-io, bootstrap, sleep-nudge,
+                      event-hub, control-server, protocol, daemon, ctl, wrap
+    bin/pi-ctl
+    .pi/              pi project config + sysprompt extension
+    third_party/      pi-acm (vendored), pi (clean upstream submodule)
+  pi-discord/
+    src/              discli-io, routing, buffering, digest, missed-pings,
+                      formatting, pi-host-client, control-server, protocol,
+                      daemon, ctl, state
+    bin/pi-discord-ctl
+    third_party/      discli (Quiterion fork submodule, disclaw-patches branch)
+scripts/              start-host, start-discord, start-all, restart-*, dev-test
+docs/agent/           agent-facing skills (pi-ctl, pi-discord-ctl, orientation)
+docs/dev/             design notes (architecture.md, next_steps.md, welcome.testing.md)
+bin/                  workspace-level symlinks to the two ctl binaries
 ```
 
 ## Status
 
-Slices A–D complete (session resumption, activity digest, buffering,
-missed-pings + discli humanization). Plus today's polish pass: XML
-message format, reactions, typing, whois, attachments, send-from-stdin,
-channel-name resolution, tier 1 pi-exit visibility, start.sh/restart.sh
-ergonomics, state.json deploy-config persistence. See
-`docs/dev/next_steps.md` for what's done vs. likely-next.
+Greenfield as of the pi-host / pi-discord split. The prior single-
+daemon project (named "disclaw") landed slices A–D plus a polish pass
+covering XML message format, reactions, typing, attachments, send-from-
+stdin, channel-name resolution, restart ergonomics, and per-(provider,
+model) session tracking. All of that survives the split; the
+architectural change here is exclusively in how the components are
+factored and how they speak to each other.
 
-The agent-facing surface is documented in
-`docs/agent/skills/disclaw-ctl/SKILL.md`. That's the right read if
-you're sitting in front of a running daemon.
+See `docs/dev/architecture.md` for the design details and
+`docs/dev/next_steps.md` for what's done vs. likely-next.
 
 ## Built with
 
 - pi-coding-agent (`@mariozechner/pi-coding-agent`)
 - pi-acm (`@earendil-works/pi-acm`, vendored with one local patch)
-- discli (`DevRohit06/discli`, vendored as a fork at
-  `Quiterion/discli` with disclaw-patches branch)
+- discli (`DevRohit06/discli`, vendored as `Quiterion/discli`
+  disclaw-patches branch)
 - discord.py (transitively via discli)

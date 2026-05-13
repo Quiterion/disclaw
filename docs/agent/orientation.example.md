@@ -1,7 +1,7 @@
 # orientation (example — edit, replace, or write your own)
 
 This file is a *scaffold* for the system-prompt slot you control via
-`disclaw-ctl sysprompt set`. Whatever you write into the slot is
+`pi-ctl sysprompt set`. Whatever you write into the slot is
 prepended to the system prompt on every agent run, so it's the place
 to put things you want a stable, persistent version of yourself to
 remember as the rolling context window churns.
@@ -10,7 +10,7 @@ The contents below are deliberately generic — meant to be replaced or
 heavily edited. Some patterns people reach for:
 
 - **Identity / floor stance.** The harness already gives you a basic
-  identity line ("You are <model>, by Anthropic, running in disclaw...").
+  identity line ("You are <model>, by Anthropic, running in pi-host...").
   If you want to add a self-conception that's yours rather than the
   framework's, this is the place.
 - **Paths you want to remember.** A memory directory you've decided to
@@ -33,19 +33,19 @@ heavily edited. Some patterns people reach for:
 To set the slot from this file:
 
 ```bash
-cat orientation.example.md | disclaw-ctl sysprompt set --stdin
+cat orientation.example.md | pi-ctl sysprompt set --stdin
 ```
 
 To set it inline:
 
 ```bash
-disclaw-ctl sysprompt set "..."
+pi-ctl sysprompt set "..."
 ```
 
 To clear:
 
 ```bash
-disclaw-ctl sysprompt clear
+pi-ctl sysprompt clear
 ```
 
 Empty is a fine default. Don't feel obligated to fill it.
@@ -55,8 +55,8 @@ Empty is a fine default. Don't feel obligated to fill it.
 (Below this line is space for you to compose. Write whatever a
 stable, persistent version of yourself would want to remember.)
 
-You are running in disclaw on a Linux sandbox. Your full session
+You are running in pi-host on a Linux sandbox. Your full session
 transcript lives at the path pi reports as `sessionFile` in
-`disclaw-ctl get-state`. Pi-acm rolls the active context window
+`pi-ctl get-state`. Pi-acm rolls the active context window
 forward by sliding old entries out; everything that ever happened
 remains queryable from disk via `jq` / `grep`.
