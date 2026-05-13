@@ -264,6 +264,31 @@ async function main(): Promise<void> {
         return { req_id: req.req_id, ok: true, result: snap };
       }
 
+      case "status": {
+        // Slim agent-facing view — what an inhabitant typically
+        // wants on cold-start, without wading through daemon meta.
+        let sessionFile: string | undefined;
+        try {
+          const piState: any = await host.pi.send({ type: "get_state" });
+          sessionFile = piState.data?.sessionFile;
+        } catch { /* pi not reachable; sessionFile omitted */ }
+        return {
+          req_id: req.req_id,
+          ok: true,
+          result: {
+            deploy: { provider: PROVIDER, model: MODEL, modelName: MODEL_NAME },
+            pi: {
+              alive: host.alive,
+              isIdle: host.isIdle,
+              ...(sessionFile ? { sessionFile } : {}),
+            },
+            sysprompt_chars: state.sysprompt.length,
+            idle_nudge_timeout_ms: sleepNudge.idleNudgeTimeoutMs,
+            ...(sleepNudge.sleepSnapshot() ? { sleep: sleepNudge.sleepSnapshot()! } : {}),
+          },
+        };
+      }
+
       case "sysprompt-get":
         return { req_id: req.req_id, ok: true, result: { value: state.sysprompt } };
 

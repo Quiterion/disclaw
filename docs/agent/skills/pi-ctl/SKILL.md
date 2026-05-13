@@ -26,13 +26,17 @@ daemon — see `skills/pi-discord-ctl/SKILL.md`.
 
 ```
 pi-ctl ping                                # health check; returns "pong"
-pi-ctl get-state                           # show pi-host + pi state
+pi-ctl status                              # slim agent-facing view
+pi-ctl get-state                           # full snapshot
 ```
 
-`get-state` reports: pi-host uptime, deploy config (provider/model/
-modelName), pi runtime state (alive, isStreaming, isCompacting, isIdle,
-session info), sysprompt slot char count, idle-nudge timeout, active
-sleep window if any, and any connected subscriber daemons.
+`status` is the cold-start view: deploy config, pi alive/idle,
+sysprompt slot length, idle-nudge timeout, active sleep window if
+any. Drops daemon meta and pi RPC internals.
+
+`get-state` is the full snapshot: everything `status` returns plus
+pi-host uptime, isCompacting, session registry, message counts, and
+any connected subscriber daemons.
 
 ## Sysprompt slot
 

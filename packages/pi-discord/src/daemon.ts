@@ -240,6 +240,34 @@ async function main(): Promise<void> {
         return { req_id: req.req_id, ok: true, result: out };
       }
 
+      case "status": {
+        // Slim agent-facing view. Pre-computes digest_count +
+        // missed_pings_count so the agent doesn't have to peek the
+        // full lists just to know if anything's there.
+        const digestCount = digest.peek().reduce((n, e) => n + e.count, 0);
+        let missedPingsCount = 0;
+        try {
+          missedPingsCount = readMissedPings(MISSED_PINGS_FILE).length;
+        } catch {
+          /* missed-pings file may not exist yet — treat as 0 */
+        }
+        return {
+          req_id: req.req_id,
+          ok: true,
+          result: {
+            discord_connected: discli?.isRunning ?? false,
+            pi_host_connected: piHost.connected,
+            pi_idle: piIdle,
+            subscriptions: [...state.subscriptions],
+            ping_mode: state.ping_mode,
+            digest_mode: state.digest_mode,
+            digest_count: digestCount,
+            missed_pings_count: missedPingsCount,
+            ...(deploy ? { deploy } : {}),
+          },
+        };
+      }
+
       case "subscribe":
       case "unsubscribe": {
         // Reject `#name` form with a clear error rather than silently

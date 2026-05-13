@@ -21,8 +21,17 @@ the env var.
 
 ```
 pi-discord-ctl ping                       # health check; returns "pong"
-pi-discord-ctl get-state                  # show bridge + Discord-side state
+pi-discord-ctl status                     # slim agent-facing view
+pi-discord-ctl get-state                  # full bridge + Discord state
 ```
+
+`status` is the cold-start view: subscriptions, ping-mode,
+digest-mode, current digest count + missed-pings count, pi-host
+connection state, Discord connection state. Quick "what's currently
+configured for me?"
+
+For the agent's *self*-config (sysprompt slot, sleep, idle-nudge
+timeout) use `pi-ctl status` — the two sides each own their slice.
 
 > For most verbs that take a `<channel_id>`, you can also pass `#name`
 > (e.g. `pi-discord-ctl send #general "..."`). Numeric IDs are always

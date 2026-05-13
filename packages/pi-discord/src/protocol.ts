@@ -20,6 +20,7 @@ export type DigestMode = "follow_up" | "none";
 export type DiscordCtlRequest =
   | { req_id: string; cmd: "ping" }
   | { req_id: string; cmd: "get-state" }
+  | { req_id: string; cmd: "status" }
   | { req_id: string; cmd: "subscribe"; channel_id: string }
   | { req_id: string; cmd: "unsubscribe"; channel_id: string }
   | { req_id: string; cmd: "list-subscriptions" }
@@ -55,6 +56,25 @@ export interface DiscordCtlResponseError {
 export type DiscordCtlResponse<T = unknown> = DiscordCtlResponseOk<T> | DiscordCtlResponseError;
 
 // ── State payload (get-state) ───────────────────────────────────────────
+
+/**
+ * Slim, agent-facing view of bridge state — what an inhabitant
+ * typically wants on cold-start. A strict subset of
+ * {@link DiscordDaemonState} plus two pre-computed counts
+ * (digest_count, missed_pings_count) friendlier than peeking full
+ * lists.
+ */
+export interface DiscordStatusSnapshot {
+  discord_connected: boolean;
+  pi_host_connected: boolean;
+  pi_idle: boolean;
+  subscriptions: string[];
+  ping_mode: PingMode;
+  digest_mode: DigestMode;
+  digest_count: number;
+  missed_pings_count: number;
+  deploy?: { provider: string; model: string; modelName: string };
+}
 
 export interface DiscordDaemonState {
   daemon: {

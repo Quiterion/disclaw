@@ -31,6 +31,7 @@ export type HostRequest =
   | { req_id: string; cmd: "subscribe"; events?: string[] }
   | { req_id: string; cmd: "unsubscribe" }
   | { req_id: string; cmd: "get-state" }
+  | { req_id: string; cmd: "status" }
   | { req_id: string; cmd: "sysprompt-get" }
   | { req_id: string; cmd: "sysprompt-set"; value: string }
   | { req_id: string; cmd: "sysprompt-clear" }
@@ -220,4 +221,21 @@ export interface HostStateSnapshot {
     /** Pi session files keyed by `<provider>:<model>`. */
     sessions: Record<string, string>;
   };
+}
+
+/**
+ * Slim, agent-facing view of state — what an inhabitant typically
+ * wants to glance at on cold-start ("what's currently configured for
+ * me?") without wading through daemon meta / pi RPC internals.
+ *
+ * A strict subset of {@link HostStateSnapshot}: drops uptime,
+ * subscribers, isCompacting, pi.exit, pi.rpc detail, session
+ * registry, and the initialized flag.
+ */
+export interface HostStatusSnapshot {
+  deploy: { provider: string; model: string; modelName: string };
+  pi: { alive: boolean; isIdle: boolean; sessionFile?: string };
+  sysprompt_chars: number;
+  idle_nudge_timeout_ms: number | null;
+  sleep?: { until_ms: number | null };
 }

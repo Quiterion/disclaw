@@ -35,7 +35,14 @@ const HELP_TEXT = `pi-discord-ctl — your interface to the pi-discord daemon.
 
 Health & state:
   pi-discord-ctl ping                           health check
-  pi-discord-ctl get-state                      show bridge + Discord state
+  pi-discord-ctl status                         slim view: subscriptions,
+                                                ping-mode, digest-mode,
+                                                digest count, missed-pings
+                                                count, pi-host connection.
+                                                What you usually want on
+                                                cold-start.
+  pi-discord-ctl get-state                      full snapshot (daemon meta +
+                                                pi-host link state too)
 
 Discord — finding channels:
   pi-discord-ctl channels                       list channels visible to the bot
@@ -113,6 +120,9 @@ function parseArgs(argv: string[]): DiscordCtlRequest & { _quiet?: boolean } {
 
     case "get-state":
       return { cmd: "get-state", req_id: reqId };
+
+    case "status":
+      return { cmd: "status", req_id: reqId };
 
     case "subscribe": {
       const channel_id = rest[0];

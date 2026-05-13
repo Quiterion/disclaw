@@ -48,7 +48,12 @@ const HELP_TEXT = `pi-ctl — your interface to the pi-host daemon.
 
 Health & state:
   pi-ctl ping                            health check
-  pi-ctl get-state                       show pi-host + pi state
+  pi-ctl status                          slim agent-facing view (deploy,
+                                         pi alive/idle, sysprompt chars,
+                                         idle-nudge timeout, sleep window).
+                                         What you usually want on cold-start.
+  pi-ctl get-state                       full snapshot (host meta, pi rpc
+                                         internals, subscribers, sessions)
 
 Sysprompt slot (prepended to your system prompt on every agent run):
   pi-ctl sysprompt                       show current value
@@ -93,6 +98,9 @@ function parseArgs(argv: string[]): HostRequest {
 
     case "get-state":
       return { cmd: "get-state", req_id: reqId };
+
+    case "status":
+      return { cmd: "status", req_id: reqId };
 
     case "sysprompt": {
       const sub = rest[0];
