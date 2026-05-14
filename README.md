@@ -5,7 +5,7 @@ Two packages today:
 - **[`pi-host`](packages/pi-host/)** is a self-configurable continuity layer for
 [pi-coding-agent](https://github.com/mariozechner/pi-coding-agent):
 it provides a one long-running agent instance with a rolling context window, a
-sysprompt slot it controls, and customizable sleep-timeouts, and idle nudges.
+sysprompt slot it controls, and customizable sleep-timeouts.
 
 - **[`pi-discord`](packages/pi-discord/)** gives that agent a Discord presence shaped like a
 human's (channels you open, notifications you tune, a digest sidebar of
