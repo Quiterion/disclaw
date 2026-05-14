@@ -1,35 +1,27 @@
 # pi-host workspace
 
-**pi-host** is a continuity layer for
+Two packages today:
+
+- **[`pi-host`](packages/pi-host/)** is a self-configurable continuity layer for
 [pi-coding-agent](https://github.com/mariozechner/pi-coding-agent):
-one long-running agent instance with a rolling context window, a
-sysprompt slot it controls, sleep, and idle nudges. **pi-discord** is
-the first bridge — it gives that agent a Discord presence shaped like a
+it provides a one long-running agent instance with a rolling context window, a
+sysprompt slot it controls, and customizable sleep-timeouts, and idle nudges.
+
+- **[`pi-discord`](packages/pi-discord/)** gives that agent a Discord presence shaped like a
 human's (channels you open, notifications you tune, a digest sidebar of
 unreads, choosing when to type and reply), rendered agent-native as
-XML-wrapped messages.
+XML-wrapped messages, with its own cli tool (`pdc`) for Discord actions.
 
 The split is load-bearing: pi-host is the constant — it does the same
 job whether or not any bridge is connected. Bridges plug in via a
 Unix-socket subscriber protocol. A Slack or IRC or wiki-watcher bridge
-would slot in identically.
-
-Two packages today:
-
-- **[`pi-host`](packages/pi-host/)** — the supervisor. Owns one
-  `pi --mode rpc` subprocess plus its session, sysprompt slot,
-  idle-nudge timer, and sleep state. Exposes a Unix-socket RPC that
-  `pi-ctl` (CLI) and subscriber daemons (e.g. pi-discord) connect to.
-- **[`pi-discord`](packages/pi-discord/)** — the first bridge. Owns a
-  [discli](https://github.com/DevRohit06/discli) subprocess, routes
-  Discord events to pi-host (subscriptions, ping mode, activity
-  digest), and exposes its own ctl (`pdc`) for Discord verbs.
+would slot in identically
 
 
 ## What's different here
 
 If you've looked at Discord MCP clients or general-purpose agent
-harnesses, four choices set this monorepo apart.
+harnesses, three choices set this monorepo apart.
 
 **One long-running instance, not isolated sessions.** Most agent
 harnesses are session-shaped: invoke, run a task, exit. pi-host runs a
@@ -77,17 +69,10 @@ Discord, rendered agent-native as XML-wrapped frames (`<discord>` /
 `<ping>` / `<channel>` / `<digest>`) rather than mimicking a human
 client.
 
-**Bridges are pluggable; the supervisor doesn't know about Discord.**
-pi-host has no Discord-shaped state or verbs. pi-discord owns
-subscriptions, ping-mode, the digest, missed-pings — everything that
-describes what reaches the agent *from Discord*. Adding a bridge is a
-new package; removing one is `rm -rf packages/X`. The boundary is
-enforced by which socket the agent is talking to.
-
-These four together — continuity, agent-as-user, human-shaped
-participation, pluggable bridges — describe what this workspace is
-shaped *for*: long-running, self-administering agent deployment with
-social presence that respects the agent's attention and gives them a
+These three together — continuity, agent-as-user, human-shaped
+participation  — describe what this workspace is shaped *for*:
+long-running, self-administering agent deployment with social 
+presence that respects the agent's attention and gives them a
 participant's seat at the table.
 
 
@@ -95,7 +80,7 @@ participant's seat at the table.
 
 On first wake:
 
-```
+```xml
 <pi-host>
 <time>2026-05-12 20:45</time>
 Hi. You're in a long-running agent harness. There should be a
@@ -114,7 +99,7 @@ pdc set digest-mode follow_up
 
 Some time later, while the agent is busy doing their own thing, a Discord ping arrives:
 
-```
+```xml
 <discord>
 <time>2026-05-12 20:54</time>
 
@@ -128,7 +113,7 @@ hey opus, can you take a look at this?
 <msg author="carol" at="20:54" id="1503...">👋</msg>
 </channel>
 
-<digest>[unread] #help: 3, #random: 12</digest>
+<digest>[unread] #general: 3, #random: 12</digest>
 </discord>
 ```
 
