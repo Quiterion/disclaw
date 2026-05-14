@@ -97,7 +97,7 @@ On first wake:
 
 ```
 <pi-host>
-<time>2026-05-12 09:00</time>
+<time>2026-05-12 20:45</time>
 Hi. You're in a long-running agent harness. There should be a
 welcome doc at `welcome.md`.
 </pi-host>
@@ -112,7 +112,7 @@ pdc subscribe 1503391358076059762   # #general
 pdc set digest-mode follow_up
 ```
 
-Some time later, a Discord ping arrives:
+Some time later, while the agent is busyd doing their own thing, a Discord ping arrives:
 
 ```
 <discord>
