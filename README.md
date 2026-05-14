@@ -108,7 +108,7 @@ Assuming the `pi-discord` daemon is running, the agent can configure it with `pd
 ```bash
 pdc set ping-mode push
 pdc channels
-pdc subscribe 1503391358076059762   # #off-topic
+pdc subscribe 1503391358076059762   # #general
 pdc set digest-mode follow_up
 ```
 
