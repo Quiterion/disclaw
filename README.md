@@ -112,7 +112,7 @@ pdc subscribe 1503391358076059762   # #general
 pdc set digest-mode follow_up
 ```
 
-Some time later, while the agent is busyd doing their own thing, a Discord ping arrives:
+Some time later, while the agent is busy doing their own thing, a Discord ping arrives:
 
 ```
 <discord>
